@@ -29,7 +29,7 @@ cd refs/dogfight-sandbox-hg2 && python -m pip install -r source/requirements.txt
 uv run diagnose
 
 # 4. Train the agent
-uv run train --algo sac --total-timesteps 500000
+uv run train --algo sac --total-timesteps 200000
 
 # 5. Watch the trained agent in 3D
 uv run demo --model checkpoints/missile_evasion_sac_final.zip
@@ -148,7 +148,7 @@ If everything works, you'll see `ALL DIAGNOSTICS PASSED`.
 ## Step 4: Train the Agent
 
 ```
-uv run train --algo sac --total-timesteps 500000
+uv run train --algo sac --total-timesteps 200000
 ```
 
 ### Training Options
@@ -156,7 +156,7 @@ uv run train --algo sac --total-timesteps 500000
 | Flag                | Default        | Description                            |
 |---------------------|----------------|----------------------------------------|
 | `--algo`            | `sac`          | Algorithm: `sac` or `ppo`              |
-| `--total-timesteps` | `500000`       | Total training steps                   |
+| `--total-timesteps` | `200000`       | Total training steps                   |
 | `--host`            | auto-detected  | Sandbox server host                    |
 | `--port`            | `50888`        | Sandbox server port                    |
 | `--max-steps`       | `1500`         | Max steps per episode                  |
@@ -164,6 +164,7 @@ uv run train --algo sac --total-timesteps 500000
 | `--log-dir`         | `logs/`        | TensorBoard log directory              |
 | `--save-dir`        | `checkpoints/` | Model checkpoint directory             |
 | `--resume`          | -              | Path to `.zip` to resume training from |
+| `--render`          | off            | Train with 3D rendering (~10x slower)  |
 
 ### Monitor Training with TensorBoard
 

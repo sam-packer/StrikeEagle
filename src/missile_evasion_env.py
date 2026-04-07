@@ -67,6 +67,7 @@ class MissileEvasionEnv(gym.Env):
         renderless: bool = True,
         ally_id: str = "ally_1",
         enemy_id: str = "ennemy_1",
+        sam_id: str = "Ennemy_Missile_launcher_1",
         max_steps: int = 1500,
         missile_fire_delay: int = 30,
     ):
@@ -77,6 +78,7 @@ class MissileEvasionEnv(gym.Env):
         self.renderless = renderless
         self.ally_id = ally_id
         self.enemy_id = enemy_id
+        self.sam_id = sam_id
         self.max_steps = max_steps
         self.missile_fire_delay = missile_fire_delay
 
@@ -161,10 +163,12 @@ class MissileEvasionEnv(gym.Env):
         # Enemy targets our agent
         df.set_target_id(self.enemy_id, self.ally_id)
 
-        # Restore health and rearm enemy missiles
+        # Restore health and rearm enemy missiles + SAM
         df.set_health(self.ally_id, 1.0)
         df.set_health(self.enemy_id, 1.0)
         df.rearm_machine(self.enemy_id)
+        df.set_target_id(self.sam_id, self.ally_id)
+        df.rearm_machine(self.sam_id)
 
         # Sync + advance so target/health/rearm take effect
         df.get_plane_state(self.ally_id)
@@ -209,24 +213,29 @@ class MissileEvasionEnv(gym.Env):
     # Internal helpers
     # ------------------------------------------------------------------
     def _fire_enemy_missile(self):
-        """Have the enemy fire a missile at the agent."""
-        # Get the enemy's own missile list (NOT the global scene list)
+        """Fire both AAM (from enemy aircraft) and SAM (from ground launcher)."""
+        # Fire AAM from enemy aircraft
         enemy_missiles = df.get_machine_missiles_list(self.enemy_id)
         slots = df.get_missiles_device_slots_state(self.enemy_id)
         missile_slots = slots.get("missiles_slots", [])
 
         for slot_idx, available in enumerate(missile_slots):
             if available:
-                # Record the missile ID before firing
-                missile_id = enemy_missiles[slot_idx] if slot_idx < len(enemy_missiles) else None
-                # Force target lock on our agent before firing so the missile
-                # gets guidance. Without target_id, the missile launches unguided.
                 df.fire_missile(self.enemy_id, slot_idx, target_id=self.ally_id)
-                self._missile_launched = True
-                self._missile_fire_step = self._step_count
-                if missile_id:
-                    self._active_missile_id = missile_id
                 break
+
+        # Fire SAM from ground launcher
+        sam_missiles = df.get_machine_missiles_list(self.sam_id)
+        sam_slots = df.get_missiles_device_slots_state(self.sam_id)
+        sam_missile_slots = sam_slots.get("missiles_slots", [])
+
+        for slot_idx, available in enumerate(sam_missile_slots):
+            if available:
+                df.fire_missile(self.sam_id, slot_idx, target_id=self.ally_id)
+                break
+
+        self._missile_launched = True
+        self._missile_fire_step = self._step_count
 
     def _get_obs(self):
         """Query state and build obs — used only by reset()."""

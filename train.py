@@ -32,6 +32,7 @@ def main():
     parser.add_argument("--log-dir", default="logs")
     parser.add_argument("--save-dir", default="checkpoints")
     parser.add_argument("--resume", default=None, help="Path to model zip to resume from")
+    parser.add_argument("--render", action="store_true", help="Train with 3D rendering (slow but visual)")
     args = parser.parse_args()
 
     log_dir = Path(args.log_dir)
@@ -39,7 +40,7 @@ def main():
     log_dir.mkdir(exist_ok=True)
     save_dir.mkdir(exist_ok=True)
 
-    env = make_env(args, renderless=True)
+    env = make_env(args, renderless=not args.render)
 
     # Callbacks
     checkpoint_cb = CheckpointCallback(

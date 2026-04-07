@@ -166,6 +166,9 @@ def main():
         df.step(ally_id, 0.0, 0.0, 0.0, 1.0)
         time.sleep(0.03)
 
+    # Switch to top-down view so you can see both the F16 and incoming missiles
+    df.set_track_view("top")
+
     # Fire!
     enemy_missiles = df.get_machine_missiles_list(enemy_id)
     slots = df.get_missiles_device_slots_state(enemy_id)
@@ -185,8 +188,12 @@ def main():
 
     # Now fly evasive maneuvers with the missile chasing
     print("  Evading! Watch the 3D window...")
+    print()
+    print("  STEP  HEALTH  ALT(m)  SPEED(kts)  G-LOAD    STATUS")
+    print("  " + "-" * 58)
     initial_health = 1.0
     hit = False
+    prev_speed = 300.0
     for i in range(300):
         # Simple evasive pattern: alternating hard turns + climbs
         t = i / 30.0
@@ -197,22 +204,32 @@ def main():
 
         health = state.get("health_level", 1.0)
         alt = state.get("altitude", 0)
+        speed_ms = state.get("linear_speed", 0)
+        speed_kts = speed_ms * 1.944  # m/s to knots
+        # Approximate G-load from acceleration
+        accel = abs(speed_ms - prev_speed) / (1/30)
+        g_load = 1.0 + accel / 9.81
+        prev_speed = speed_ms
+
+        status = "EVADING"
+        if i < 5:
+            status = "MISSILE INBOUND"
 
         if health < initial_health - 0.01:
-            print(f"  HIT! Health dropped to {health:.2f} at step {i}, alt={alt:.0f}m")
+            print(f"  {i:4d}  {health:.2f}   {alt:5.0f}   {speed_kts:6.0f}      {g_load:4.1f}G    ** HIT! **")
             hit = True
             break
 
         if state.get("crashed") or alt < 100:
-            print(f"  CRASHED at step {i}, alt={alt:.0f}m")
+            print(f"  {i:4d}  {health:.2f}   {alt:5.0f}   {speed_kts:6.0f}      {g_load:4.1f}G    ** CRASHED **")
             hit = True
             break
 
-        if i % 50 == 0 and i > 0:
-            print(f"    step {i}: still alive, alt={alt:.0f}m, speed={state.get('linear_speed', 0):.0f}m/s")
+        if i % 10 == 0:
+            print(f"  {i:4d}  {health:.2f}   {alt:5.0f}   {speed_kts:6.0f}      {g_load:4.1f}G    {status}")
 
     if not hit:
-        print(f"  SURVIVED! Evaded the missile after 300 steps")
+        print(f"\n  SURVIVED! Evaded the missile after 300 steps")
 
     # ---- Phase 5b: Kill Verification ----
     section("Phase 5b: Missile Kill Verification")
