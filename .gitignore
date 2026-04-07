@@ -29,3 +29,6 @@ uv.lock
 
 # HIRL4UCAV reference (not needed at runtime, only studied for patterns)
 refs/HIRL4UCAV/
+
+# Compiled assets (auto-generated from assets/ by harfang assetc on startup)
+refs/dogfight-sandbox-hg2/source/assets_compiled/
