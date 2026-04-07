@@ -61,8 +61,13 @@ def main():
             f"steps={step}, reward={total_reward:.1f}, outcome={outcome}"
         )
 
-        # Let the hit/crash/evasion play out visually and audibly before resetting
-        time.sleep(3)
+        # Keep the sim ticking so the explosion/crash animation plays out
+        # before resetting. In client_update_mode the sandbox only advances
+        # when we call update_scene().
+        post_frames = int(3.0 / (1 / 60))  # ~3 seconds at rendered 60Hz
+        for _ in range(post_frames):
+            df.update_scene()
+            time.sleep(1 / 60)
 
     env.close()
 

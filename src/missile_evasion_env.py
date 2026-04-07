@@ -187,6 +187,9 @@ class MissileEvasionEnv(gym.Env):
         if not self._missile_launched and self._step_count >= self.missile_fire_delay:
             self._fire_enemy_missile()
 
+        # Gear should always be up in flight — force retract every step
+        df.retract_gear(self.ally_id)
+
         # Single round-trip: apply controls + advance sim n frames + return state
         if n > 1:
             plane_state = df.step_n(
