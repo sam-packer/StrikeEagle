@@ -7,7 +7,7 @@ from stable_baselines3 import PPO, SAC
 
 from src import dogfight_client as df
 from src.missile_evasion_env import MissileEvasionEnv
-from src.net_utils import get_lan_ip
+from src.net_utils import get_default_host
 
 
 def main():
@@ -21,7 +21,7 @@ def main():
     args = parser.parse_args()
 
     env = MissileEvasionEnv(
-        host=args.host or get_lan_ip(),
+        host=args.host or get_default_host(),
         port=args.port,
         renderless=False,  # Full 3D rendering for the demo
         max_steps=args.max_steps,
@@ -51,14 +51,18 @@ def main():
             step += 1
             done = terminated or truncated
 
-            # ~30fps so the 3D rendering is watchable
-            time.sleep(0.033)
+            # Sandbox renders at its own native framerate; small sleep
+            # just prevents flooding it with commands
+            time.sleep(0.02)
 
         outcome = info.get("outcome", "unknown")
         print(
             f"Episode {ep + 1}/{args.episodes}: "
             f"steps={step}, reward={total_reward:.1f}, outcome={outcome}"
         )
+
+        # Let the hit/crash/evasion play out visually and audibly before resetting
+        time.sleep(3)
 
     env.close()
 

@@ -20,7 +20,7 @@ import numpy as np
 
 from src import dogfight_client as df
 from src.missile_evasion_env import MissileEvasionEnv
-from src.net_utils import get_lan_ip
+from src.net_utils import get_default_host
 
 
 def section(title):
@@ -37,7 +37,7 @@ def main():
                         help="Number of random-action episodes to run (0 to skip)")
     args = parser.parse_args()
 
-    host = args.host or get_lan_ip()
+    host = args.host or get_default_host()
 
     # ---- Phase 1: Raw connection test ----
     section("Phase 1: Connecting to Dogfight Sandbox")

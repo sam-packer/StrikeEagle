@@ -14,7 +14,7 @@ import gymnasium as gym
 import numpy as np
 
 from src import dogfight_client as df
-from src.net_utils import get_lan_ip
+from src.net_utils import get_default_host
 
 # ---------------------------------------------------------------------------
 # Normalisation constants (matching HIRL4UCAV conventions)
@@ -73,7 +73,7 @@ class MissileEvasionEnv(gym.Env):
     ):
         super().__init__()
 
-        self.host = host or get_lan_ip()
+        self.host = host or get_default_host()
         self.port = port
         self.renderless = renderless
         self.ally_id = ally_id
@@ -110,14 +110,15 @@ class MissileEvasionEnv(gym.Env):
         # Official examples wait 2s after connect for the sandbox to settle
         time.sleep(2)
         df.disable_log()
-        df.set_client_update_mode(True)
-        # 2x sim timestep: each step covers 1/30s instead of 1/60s,
-        # halving the number of steps needed for the same scenario duration
-        df.set_timestep(1 / 30)
-        df.set_renderless_mode(self.renderless)
-        # Wait for sandbox to finish transitioning to renderless mode
-        while not df.get_running().get("running", False):
-            pass
+        if self.renderless:
+            df.set_client_update_mode(True)
+            # 2x sim timestep: each step covers 1/30s instead of 1/60s,
+            # halving the number of steps needed for the same scenario duration
+            df.set_timestep(1 / 30)
+            df.set_renderless_mode(True)
+            # Wait for sandbox to finish transitioning to renderless mode
+            while not df.get_running().get("running", False):
+                pass
         self._connected = True
 
     # ------------------------------------------------------------------

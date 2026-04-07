@@ -148,9 +148,8 @@ Main.current_state = states.init_menu_state()
 
 while not Main.flag_exit:
 
-        Main.update_inputs()
-
         if (not Main.flag_client_update_mode) or ((not Main.flag_renderless) and Main.flag_client_ask_update_scene):
+            Main.update_inputs()
             Main.update()
             # Signal the network thread that the update is done
             Main.client_update_done.set()

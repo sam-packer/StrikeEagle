@@ -4,9 +4,9 @@ import time
 import sys
 sys.path.insert(0, ".")
 from src import dogfight_client as df
-from src.net_utils import get_lan_ip
+from src.net_utils import get_default_host
 
-host = get_lan_ip()
+host = get_default_host()
 port = 50888
 
 def try_cmd(label, fn, *args, **kwargs):

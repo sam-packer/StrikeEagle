@@ -110,8 +110,9 @@ cd refs/dogfight-sandbox-hg2/source
 python main.py network_port 12345
 ```
 
-> **Tip:** The default port is **50888**. All scripts auto-detect your LAN IP
-> (matching what the sandbox displays). You can override with `--host <ip>` if needed.
+> **Tip:** The default port is **50888**. All scripts connect to `localhost`
+> (`127.0.0.1`) by default since the sandbox binds to all interfaces.
+> You can override with `--host <ip>` if needed for remote connections.
 
 ---
 
@@ -136,12 +137,12 @@ If everything works, you'll see `ALL DIAGNOSTICS PASSED`.
 
 **Troubleshooting the connection:**
 
-| Problem                  | Fix                                                            |
-|--------------------------|----------------------------------------------------------------|
-| "Connection refused"     | Sandbox isn't running or isn't in Network mode                 |
-| Hangs on "Connecting..." | Check firewall; try `--host <your-lan-ip>` from sandbox window |
-| Wrong plane IDs          | Check `network_mission_config.json` and restart sandbox        |
-| No missiles on aircraft  | All default aircraft models have missiles                      |
+| Problem                  | Fix                                                                  |
+|--------------------------|----------------------------------------------------------------------|
+| "Connection refused"     | Sandbox isn't running or isn't in Network mode                       |
+| Hangs on "Connecting..." | Check firewall; try `--host <your-lan-ip>` if localhost doesn't work |
+| Wrong plane IDs          | Check `network_mission_config.json` and restart sandbox              |
+| No missiles on aircraft  | All default aircraft models have missiles                            |
 
 ---
 
@@ -232,7 +233,7 @@ src/
   socket_lib.py              TCP socket layer with TCP_NODELAY + batched writes
   dogfight_client.py         HarFang3D network API wrapper + custom STEP command
   missile_evasion_env.py     Gymnasium environment for missile evasion
-  net_utils.py               LAN IP auto-detection
+  net_utils.py               Default host configuration (localhost)
 train.py                     SB3 training script (PPO/SAC)
 demo.py                      Evaluation with 3D rendering + camera tracking
 diagnose.py                  Connection diagnostic + missile attack demo
@@ -293,6 +294,7 @@ We applied the following fixes to the sandbox source
 **Transport** (`socket_lib.py` client + server):
 
 - TCP_NODELAY on both ends, SO_REUSEADDR on server, batched writes
+- Server binds to all interfaces (localhost + LAN) for minimal latency
 
 See `docs/netcode_patches.md` for full details with before/after code.
 

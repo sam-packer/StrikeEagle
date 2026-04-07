@@ -5,7 +5,7 @@ import struct
 import threading, sys
 
 hostname = socket.gethostname()
-HOST = socket.gethostbyname(hostname)
+HOST = ""  # Bind to all interfaces (localhost + LAN)
 
 message_buffer = {}
 send_message_thread = None

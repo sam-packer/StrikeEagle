@@ -177,6 +177,13 @@ sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 Enabled on the server socket to prevent "address already in use" errors when
 restarting the sandbox quickly after a crash or disconnect.
 
+### Bind to All Interfaces (server socket_lib.py)
+
+The upstream server binds to the LAN IP only (`socket.gethostbyname(hostname)`),
+forcing clients to connect via the network stack even on the same machine.
+Changed to bind to `""` (all interfaces) so clients can use `127.0.0.1`
+(localhost), eliminating NIC round-trip latency for local training.
+
 ### Batched Writes (client socket_lib.py)
 
 Added `send_messages_batch()` that concatenates multiple framed messages into

@@ -40,7 +40,7 @@ Our client library communicates with the sandbox:
 
 - **`socket_lib.py`** - TCP socket layer with `TCP_NODELAY`, batched writes
 - **`dogfight_client.py`** - ~50 API wrappers + custom `STEP` command
-- **`net_utils.py`** - LAN IP auto-detection
+- **`net_utils.py`** - Default host configuration (localhost)
 
 The critical optimization is the `STEP` command: a custom server-side command
 that applies controls, advances physics, and returns aircraft state in a single

@@ -8,12 +8,12 @@ from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
 
 from src.missile_evasion_env import MissileEvasionEnv
-from src.net_utils import get_lan_ip
+from src.net_utils import get_default_host
 
 
 def make_env(args, renderless=True):
     env = MissileEvasionEnv(
-        host=args.host or get_lan_ip(),
+        host=args.host or get_default_host(),
         port=args.port,
         renderless=renderless,
         max_steps=args.max_steps,
