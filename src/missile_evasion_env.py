@@ -333,6 +333,8 @@ class MissileEvasionEnv(gym.Env):
 
         alt = plane.get("altitude", 4000.0)
 
+        speed = plane.get("linear_speed", 300.0)
+
         # +1 per step alive (survival reward)
         reward += 1.0
 
@@ -350,20 +352,12 @@ class MissileEvasionEnv(gym.Env):
         elif alt > 9000:
             reward -= 1.0
 
-        # Distance-based shaping: small bounded bonus for keeping away from
-        # active missiles.  Clamped to [0, 0.5] per missile to prevent the
-        # reward scale from blowing up the critic.
-        a_pos = np.array(plane["position"], dtype=np.float32)
-        for ms in missile_states:
-            if not ms.get("active", False) or ms.get("destroyed", False):
-                continue
-            if "position" not in ms:
-                continue
-
-            m_pos = np.array(ms["position"], dtype=np.float32)
-            distance = float(np.linalg.norm(m_pos - a_pos))
-            # Smooth ramp: 0 at 0m, 0.5 at 2km+
-            reward += min(distance / 4000.0, 0.5)
+        # Speed penalty — don't stall. Below 150 m/s the aircraft is
+        # dangerously slow; below 80 m/s it's effectively stalled.
+        if speed < 80:
+            reward -= 5.0
+        elif speed < 150:
+            reward -= 1.0
 
         # Check if hit by missile (health dropped)
         if health < self._initial_health - 0.01:
