@@ -214,6 +214,82 @@ def main():
     if not hit:
         print(f"  SURVIVED! Evaded the missile after 300 steps")
 
+    # ---- Phase 5b: Kill Verification ----
+    section("Phase 5b: Missile Kill Verification")
+    print("  Flying STRAIGHT at the enemy — no evasion.")
+    print("  If the missile works, we WILL get hit.\n")
+
+    # Reset scenario: place F16 AHEAD of the enemy, flying TOWARDS it
+    df.reset_machine(ally_id)
+    df.reset_machine(enemy_id)
+
+    # F16 at 4000m, facing -Z (towards enemy)
+    df.reset_machine_matrix(ally_id, 0, 4000, 2000, 0, math.pi, 0)
+    df.set_plane_thrust(ally_id, 0.5)
+    df.set_plane_linear_speed(ally_id, 200)
+    df.retract_gear(ally_id)
+
+    # Enemy at 4000m, facing +Z (towards F16) — head-on
+    df.reset_machine_matrix(enemy_id, 0, 4000, -2000, 0, 0, 0)
+    df.set_plane_thrust(enemy_id, 1.0)
+    df.set_plane_linear_speed(enemy_id, 300)
+    df.retract_gear(enemy_id)
+    df.set_plane_pitch(enemy_id, 0)
+    df.set_plane_roll(enemy_id, 0)
+    df.set_plane_yaw(enemy_id, 0)
+    df.set_target_id(enemy_id, ally_id)
+    df.set_health(ally_id, 1.0)
+    df.rearm_machine(enemy_id)
+
+    df.get_plane_state(ally_id)
+    df.update_scene()
+
+    df.set_camera_track(ally_id)
+    df.set_track_view("front")
+
+    # Let targeting lock for 20 steps
+    for _ in range(20):
+        df.step(ally_id, 0.0, 0.0, 0.0, 0.5)
+        time.sleep(0.03)
+
+    # Fire missile
+    enemy_missiles = df.get_machine_missiles_list(enemy_id)
+    slots = df.get_missiles_device_slots_state(enemy_id)
+    missile_slots = slots.get("missiles_slots", [])
+    for slot_idx, available in enumerate(missile_slots):
+        if available:
+            missile_name = enemy_missiles[slot_idx] if slot_idx < len(enemy_missiles) else "?"
+            df.fire_missile(enemy_id, slot_idx, target_id=ally_id)
+            print(f"  MISSILE AWAY! {missile_name} → head-on collision course")
+            break
+
+    # Fly straight — no evasion, just cruise into the missile
+    kill_confirmed = False
+    for i in range(500):
+        state = df.step(ally_id, 0.0, 0.0, 0.0, 0.5)
+        time.sleep(0.03)
+
+        health = state.get("health_level", 1.0)
+        alt = state.get("altitude", 0)
+
+        if health < 0.99:
+            print(f"  KILL CONFIRMED! Health={health:.2f} at step {i}, alt={alt:.0f}m")
+            print("  Missile guidance is WORKING. The agent CAN be hit.")
+            kill_confirmed = True
+            break
+
+        if state.get("crashed") or state.get("wreck"):
+            print(f"  AIRCRAFT DESTROYED at step {i}")
+            kill_confirmed = True
+            break
+
+        if i % 100 == 0 and i > 0:
+            print(f"    step {i}: health={health:.2f}, alt={alt:.0f}m, speed={state.get('linear_speed', 0):.0f}m/s")
+
+    if not kill_confirmed:
+        print("  WARNING: Missile did NOT hit after 500 steps.")
+        print("  Missile guidance may not be working correctly!")
+
     # ---- Phase 6: Random-action episodes through the Gymnasium env ----
     if args.random_episodes > 0:
         section(f"Phase 6: Random-Action Episodes ({args.random_episodes})")
