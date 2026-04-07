@@ -44,6 +44,7 @@ def init_server(main_):
 		"SET_CLIENT_UPDATE_MODE": set_client_update_mode,
 		"UPDATE_SCENE": update_scene,
 		"STEP": step_command,
+		"STEP_N": step_n_command,
 		"DISPLAY_VECTOR": display_vector,
 		"DISPLAY_2DTEXT": display_2DText,
 
@@ -255,6 +256,82 @@ def step_command(args):
 			main.client_update_done.wait()
 
 	# Return plane state (same as GET_PLANE_STATE but without re-parsing args)
+	h_spd, v_spd = machine.get_world_speed()
+	gear = machine.get_device("Gear")
+	td = machine.get_device("TargettingDevice")
+
+	gear_activated = gear.activated if gear is not None else False
+
+	if td is not None:
+		target_locked = td.target_locked
+		target_angle = td.target_angle
+	else:
+		target_locked = False
+		target_angle = 0
+
+	position = machine.get_position()
+	rotation = machine.get_Euler()
+	v_move = machine.get_move_vector()
+	state = {
+		"timestamp": main.framecount,
+		"timestep": main.timestep,
+		"position": [position.x, position.y, position.z],
+		"Euler_angles": [rotation.x, rotation.y, rotation.z],
+		"health_level": machine.health_level,
+		"destroyed": machine.flag_destroyed,
+		"wreck": machine.wreck,
+		"crashed": machine.flag_crashed,
+		"active": machine.activated,
+		"nationality": machine.nationality,
+		"thrust_level": machine.get_thrust_level(),
+		"horizontal_speed": h_spd,
+		"vertical_speed": v_spd,
+		"linear_speed": machine.get_linear_speed(),
+		"move_vector": [v_move.x, v_move.y, v_move.z],
+		"altitude": machine.get_altitude(),
+		"heading": machine.get_heading(),
+		"pitch_attitude": machine.get_pitch_attitude(),
+		"roll_attitude": machine.get_roll_attitude(),
+		"gear": gear_activated,
+		"target_locked": target_locked,
+		"target_angle": target_angle
+	}
+	socket_lib.send_message(str.encode(json.dumps(state)))
+
+
+def step_n_command(args):
+	"""Like STEP but advances the simulation n frames with the same controls.
+
+	One network round-trip for n physics steps — use with action-repeat to
+	speed up RL training.
+
+	Args:
+		plane_id: aircraft to control and query
+		pitch, roll, yaw: control inputs (-1 to 1)
+		thrust: throttle (0 to 1)
+		n: number of physics frames to advance (default 1)
+	"""
+	plane_id = args["plane_id"]
+	machine = main.destroyables_items[plane_id]
+	n = max(1, int(args.get("n", 1)))
+
+	# Apply controls once (they persist across frames)
+	machine.set_pitch_level(args.get("pitch", 0.0))
+	machine.set_roll_level(args.get("roll", 0.0))
+	machine.set_yaw_level(args.get("yaw", 0.0))
+	machine.set_thrust_level(args.get("thrust", 0.0))
+
+	# Advance simulation n frames
+	if main.flag_client_update_mode:
+		for _ in range(n):
+			if main.flag_renderless:
+				main.update()
+			else:
+				main.client_update_done.clear()
+				main.flag_client_ask_update_scene = True
+				main.client_update_done.wait()
+
+	# Return plane state after the final frame
 	h_spd, v_spd = machine.get_world_speed()
 	gear = machine.get_device("Gear")
 	td = machine.get_device("TargettingDevice")

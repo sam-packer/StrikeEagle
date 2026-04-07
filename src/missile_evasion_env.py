@@ -180,19 +180,27 @@ class MissileEvasionEnv(gym.Env):
         obs = self._get_obs()
         return obs, {}
 
-    def step(self, action):
-        self._step_count += 1
+    def step(self, action, n=1):
+        self._step_count += n
 
         # Fire missile before advancing (so missile is in flight this frame)
         if not self._missile_launched and self._step_count >= self.missile_fire_delay:
             self._fire_enemy_missile()
 
-        # Single round-trip: apply controls + advance sim + return state
-        plane_state = df.step(
-            self.ally_id,
-            float(action[0]), float(action[1]),
-            float(action[2]), float(action[3]),
-        )
+        # Single round-trip: apply controls + advance sim n frames + return state
+        if n > 1:
+            plane_state = df.step_n(
+                self.ally_id,
+                float(action[0]), float(action[1]),
+                float(action[2]), float(action[3]),
+                n,
+            )
+        else:
+            plane_state = df.step(
+                self.ally_id,
+                float(action[0]), float(action[1]),
+                float(action[2]), float(action[3]),
+            )
         health = plane_state.get("health_level", 1.0)
 
         # NOTE: get_missile_state crashes the sandbox server for fired missiles,

@@ -131,6 +131,35 @@ Returns the full plane state dict (same as `GET_PLANE_STATE`).
 
 **Performance impact:** Reduces per-step network operations from ~11 to 1.
 
+### STEP_N (network_server.py)
+
+Like `STEP` but advances the simulation **n** physics frames with the same
+controls in a single network round-trip. Used with action-repeat (frame
+skipping) to speed up RL training — the agent makes one decision every n
+frames instead of every frame.
+
+```json
+{
+  "command": "STEP_N",
+  "args": {
+    "plane_id": "ally_1",
+    "pitch": 0.5,
+    "roll": -0.3,
+    "yaw": 0.0,
+    "thrust": 1.0,
+    "n": 4
+  }
+}
+```
+
+Returns the full plane state dict after the final frame (same as `STEP`).
+
+**Performance impact:** With action-repeat of 4, training needs 4x fewer
+network round-trips and 4x fewer neural network forward passes for the same
+amount of sim time. Divide `--total-timesteps` by the repeat count to cover
+the same sim duration (e.g. `--action-repeat 4 --total-timesteps 50000`
+covers the same sim time as `--total-timesteps 200000` without repeat).
+
 ### SET_CAMERA_TRACK (network_server.py)
 
 Sets the 3D camera to follow a specific aircraft and makes it the audio

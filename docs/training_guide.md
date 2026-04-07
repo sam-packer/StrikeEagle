@@ -39,12 +39,31 @@ uv run train --algo sac --total-timesteps 500000 --checkpoint-freq 10000
 uv run train --resume checkpoints/missile_evasion_50000_steps.zip
 ```
 
+### Action repeat (frame skipping)
+
+By default, the agent makes one decision every 4 sim frames instead of every
+frame. This speeds up training by reducing both network round-trips and neural
+network forward passes.
+
+**Important:** When using action repeat, divide `--total-timesteps` by the
+repeat count to cover the same amount of sim time. For example:
+
+```bash
+# These cover the same sim time:
+uv run train --action-repeat 1 --total-timesteps 200000   # no repeat
+uv run train --action-repeat 4 --total-timesteps 50000    # 4x repeat (default)
+```
+
+Use `--action-repeat 1` to disable frame skipping if you need per-frame
+decisions.
+
 ### All options
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--algo` | `sac` | `sac` or `ppo` |
 | `--total-timesteps` | `200000` | Total training steps |
 | `--max-steps` | `1500` | Max steps per episode |
+| `--action-repeat` | `4` | Frames per decision (divide timesteps by this) |
 | `--checkpoint-freq` | `10000` | Save every N steps |
 | `--log-dir` | `logs/` | TensorBoard directory |
 | `--save-dir` | `checkpoints/` | Checkpoint directory |

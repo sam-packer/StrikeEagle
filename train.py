@@ -9,6 +9,7 @@ from stable_baselines3.common.monitor import Monitor
 
 from src.missile_evasion_env import MissileEvasionEnv
 from src.net_utils import get_default_host
+from src.wrappers import ActionRepeat
 
 
 def make_env(args, renderless=True):
@@ -18,6 +19,8 @@ def make_env(args, renderless=True):
         renderless=renderless,
         max_steps=args.max_steps,
     )
+    if args.action_repeat > 1:
+        env = ActionRepeat(env, repeat=args.action_repeat)
     return Monitor(env)
 
 
@@ -32,6 +35,12 @@ def main():
     parser.add_argument("--log-dir", default="logs")
     parser.add_argument("--save-dir", default="checkpoints")
     parser.add_argument("--resume", default=None, help="Path to model zip to resume from")
+    parser.add_argument(
+        "--action-repeat", type=int, default=4,
+        help="Repeat each action for N sim frames in one network call (default: 4). "
+             "Divide --total-timesteps by this value to cover the same sim time "
+             "(e.g. 200k/4 = 50k timesteps).",
+    )
     parser.add_argument("--render", action="store_true", help="Train with 3D rendering (slow but visual)")
     args = parser.parse_args()
 

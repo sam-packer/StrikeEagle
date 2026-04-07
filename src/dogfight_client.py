@@ -69,6 +69,18 @@ def step(plane_id, pitch, roll, yaw, thrust):
     })
 
 
+def step_n(plane_id, pitch, roll, yaw, thrust, n):
+    """Apply controls + advance sim *n* frames + return plane state in one round-trip."""
+    return _send_recv("STEP_N", {
+        "plane_id": plane_id,
+        "pitch": pitch,
+        "roll": roll,
+        "yaw": yaw,
+        "thrust": thrust,
+        "n": n,
+    })
+
+
 def set_renderless_mode(flag: bool):
     _send("SET_RENDERLESS_MODE", {"flag": flag})
 
