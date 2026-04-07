@@ -2189,6 +2189,18 @@ class AircraftSFX:
         self.explosion_ref = hg.LoadWAVSoundAsset("sfx/explosion.wav")
         self.machine_gun_ref = hg.LoadWAVSoundAsset("sfx/machine_gun.wav")
         self.burning_ref = hg.LoadWAVSoundAsset("sfx/burning.wav")
+        # RWR (Radar Warning Receiver) sounds
+        self.rwr_contact_ref = hg.LoadWAVSoundAsset("sfx/rwr_contact.wav")
+        self.rwr_tracking_ref = hg.LoadWAVSoundAsset("sfx/rwr_tracking.wav")
+        self.missile_warning_ref = hg.LoadWAVSoundAsset("sfx/missile_warning.wav")
+        self.rwr_clear_ref = hg.LoadWAVSoundAsset("sfx/rwr_clear.wav")
+        self.deedle_deedle_ref = hg.LoadWAVSoundAsset("sfx/deedle_deedle.wav")
+
+        # Betty voice callouts
+        self.betty_altitude_ref = hg.LoadWAVSoundAsset("sfx/betty_altitude.wav")
+        self.betty_pullup_ref = hg.LoadWAVSoundAsset("sfx/betty_pullup.wav")
+        self.betty_bingo_ref = hg.LoadWAVSoundAsset("sfx/betty_bingo.wav")
+        self.betty_flight_controls_ref = hg.LoadWAVSoundAsset("sfx/betty_flight_controls.wav")
 
         self.turbine_state = tools.create_spatialized_sound_state(hg.SR_Loop)
         self.air_state = tools.create_spatialized_sound_state(hg.SR_Loop)
@@ -2197,6 +2209,8 @@ class AircraftSFX:
         self.explosion_state = tools.create_spatialized_sound_state(hg.SR_Once)
         self.machine_gun_state = tools.create_spatialized_sound_state(hg.SR_Once)
         self.burning_state = tools.create_spatialized_sound_state(hg.SR_Loop)
+        self.missile_warning_state = tools.create_stereo_sound_state(hg.SR_Loop)
+        self.rwr_tracking_state = tools.create_stereo_sound_state(hg.SR_Loop)
 
         self.start = False
 
@@ -2211,6 +2225,17 @@ class AircraftSFX:
         self.explosion_source = None
         self.machine_gun_source = None
         self.burning_source = None
+        self.missile_warning_source = None
+        self.missile_warning_active = False
+        self.rwr_tracking_source = None
+        self.rwr_tracking_active = False
+        self.rwr_threat_state = "none"  # "none", "tracking", "missile"
+
+        # Betty callout cooldowns (prevent spamming)
+        self.betty_altitude_cooldown = 0
+        self.betty_pullup_cooldown = 0
+        self.betty_bingo_cooldown = 0
+        self.betty_damage_cooldown = 0
 
         self.pc_started = False
         self.pc_stopped = False
@@ -2219,6 +2244,23 @@ class AircraftSFX:
 
     def reset(self):
         self.exploded = False
+        self._stop_rwr()
+        self.betty_altitude_cooldown = 0
+        self.betty_pullup_cooldown = 0
+        self.betty_bingo_cooldown = 0
+        self.betty_damage_cooldown = 0
+
+    def _stop_rwr(self):
+        """Stop all RWR sounds."""
+        if self.missile_warning_source is not None:
+            hg.StopSource(self.missile_warning_source)
+            self.missile_warning_source = None
+        self.missile_warning_active = False
+        if self.rwr_tracking_source is not None:
+            hg.StopSource(self.rwr_tracking_source)
+            self.rwr_tracking_source = None
+        self.rwr_tracking_active = False
+        self.rwr_threat_state = "none"
 
     def set_air_pitch(self, value):
         self.air_state.pitch = value
@@ -2336,6 +2378,110 @@ class AircraftSFX:
             self.wind_source = hg.PlaySpatialized(self.wind_ref, self.wind_state)
         hg.SetSourceTransform(self.wind_source, self.wind_state.mtx, self.wind_state.vel)
         hg.SetSourceVolume(self.wind_source, self.wind_state.volume)
+
+        # RWR (Radar Warning Receiver) system
+        # Detect threats: missiles targeting us, or enemy aircraft tracking us
+        missile_incoming = False
+        being_tracked = False
+
+        for dm in Destroyable_Machine.machines_list:
+            # Check for incoming missiles
+            if dm.type == Destroyable_Machine.TYPE_MISSILE and dm.activated and not dm.wreck:
+                if dm.get_target_id() == self.aircraft.name:
+                    missile_incoming = True
+                    break
+            # Check for enemy aircraft with target lock on us
+            if dm.type == Destroyable_Machine.TYPE_AIRCRAFT and dm.nationality != self.aircraft.nationality:
+                td = dm.get_device("TargettingDevice")
+                if td is not None and td.target_locked and td.get_target_name() == self.aircraft.name:
+                    being_tracked = True
+
+        # Determine new threat state
+        if missile_incoming:
+            new_state = "missile"
+        elif being_tracked:
+            new_state = "tracking"
+        else:
+            new_state = "none"
+
+        # Transition RWR sounds based on state changes
+        if new_state != self.rwr_threat_state:
+            old_state = self.rwr_threat_state
+
+            # Stop current sounds
+            if self.missile_warning_active:
+                if self.missile_warning_source is not None:
+                    hg.StopSource(self.missile_warning_source)
+                    self.missile_warning_source = None
+                self.missile_warning_active = False
+            if self.rwr_tracking_active:
+                if self.rwr_tracking_source is not None:
+                    hg.StopSource(self.rwr_tracking_source)
+                    self.rwr_tracking_source = None
+                self.rwr_tracking_active = False
+
+            # Start new sounds
+            if new_state == "missile":
+                # Play contact beep then missile warning loop
+                contact_state = tools.create_stereo_sound_state(hg.SR_Once)
+                contact_state.volume = 0.9
+                hg.PlayStereo(self.rwr_contact_ref, contact_state)
+                self.missile_warning_state.volume = 0.8
+                self.missile_warning_source = hg.PlayStereo(self.missile_warning_ref, self.missile_warning_state)
+                self.missile_warning_active = True
+
+            elif new_state == "tracking":
+                # Play contact beep then tracking loop
+                contact_state = tools.create_stereo_sound_state(hg.SR_Once)
+                contact_state.volume = 0.7
+                hg.PlayStereo(self.rwr_contact_ref, contact_state)
+                self.rwr_tracking_state.volume = 0.6
+                self.rwr_tracking_source = hg.PlayStereo(self.rwr_tracking_ref, self.rwr_tracking_state)
+                self.rwr_tracking_active = True
+
+            elif new_state == "none" and old_state != "none":
+                # Threat gone — play the clear tone
+                clear_state = tools.create_stereo_sound_state(hg.SR_Once)
+                clear_state.volume = 0.7
+                hg.PlayStereo(self.rwr_clear_ref, clear_state)
+
+            self.rwr_threat_state = new_state
+
+        # Betty voice callouts
+        # Cooldowns tick down each frame
+        if self.betty_altitude_cooldown > 0:
+            self.betty_altitude_cooldown -= dts
+        if self.betty_pullup_cooldown > 0:
+            self.betty_pullup_cooldown -= dts
+        if self.betty_bingo_cooldown > 0:
+            self.betty_bingo_cooldown -= dts
+        if self.betty_damage_cooldown > 0:
+            self.betty_damage_cooldown -= dts
+
+        altitude = self.aircraft.get_altitude()
+        betty_vol = tools.create_stereo_sound_state(hg.SR_Once)
+        betty_vol.volume = 0.9
+
+        # "PULL UP PULL UP" — critical low altitude (below 300m)
+        if altitude < 300 and not self.aircraft.wreck and self.betty_pullup_cooldown <= 0:
+            hg.PlayStereo(self.betty_pullup_ref, betty_vol)
+            self.betty_pullup_cooldown = 4.0  # Don't repeat for 4 seconds
+
+        # "ALTITUDE" — low altitude warning (below 800m)
+        elif altitude < 800 and not self.aircraft.wreck and self.betty_altitude_cooldown <= 0:
+            hg.PlayStereo(self.betty_altitude_ref, betty_vol)
+            self.betty_altitude_cooldown = 5.0
+
+        # "BINGO" — low fuel / low thrust (thrust below 10% for sustained time)
+        if self.aircraft.thrust_level < 0.1 and not self.aircraft.wreck and self.betty_bingo_cooldown <= 0:
+            hg.PlayStereo(self.betty_bingo_ref, betty_vol)
+            self.betty_bingo_cooldown = 8.0
+
+        # "FLIGHT CONTROLS" + deedle — when aircraft takes damage
+        if self.aircraft.health_level < 0.7 and not self.aircraft.wreck and self.betty_damage_cooldown <= 0:
+            hg.PlayStereo(self.deedle_deedle_ref, betty_vol)
+            hg.PlayStereo(self.betty_flight_controls_ref, betty_vol)
+            self.betty_damage_cooldown = 6.0
 
         # Machine gun
         n = self.aircraft.get_machinegun_count()
