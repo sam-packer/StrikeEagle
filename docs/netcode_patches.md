@@ -230,6 +230,20 @@ radar simulation — so missiles always launched unguided (flying straight).
 provided, it force-sets `td.target_locked = True` before firing, guaranteeing
 the missile gets proper guidance regardless of lock status.
 
+## Missile Collision Fix (Machines.py)
+
+**Problem:** The missile's collision detection only activated within 100m of
+the target (`target_collision_test_distance_max = 100`). The sim uses
+raycast-based hit detection — it fires a ray from the missile's nose in its
+forward direction each frame. At 1/30s timestep, a missile traveling at
+~2000 m/s moves ~67m per frame. The missile could jump from 120m away (no
+raycast) to behind the target (raycast fires in wrong direction), passing
+straight through the aircraft without registering a hit.
+
+**Fix:** Increased `target_collision_test_distance_max` from 100 to 500.
+This starts collision raycasting much earlier, giving the missile multiple
+frames of hit detection attempts as it approaches the target.
+
 ## Cockpit Audio System (Machines.py)
 
 ### RWR (Radar Warning Receiver)
@@ -289,5 +303,6 @@ Located in `refs/dogfight-sandbox-hg2/source/assets/sfx/`:
 | Rendered mode stability           | Broken (race condition) | Stable        |
 | Console spam with disable_log     | Yes                     | No            |
 | Missile guidance in network mode  | Broken (always unguided)| Working       |
+| Missile collision at 1/30s        | Unreliable (tunneling)  | Reliable      |
 | Cockpit RWR audio                 | None                    | Full system   |
 | Betty voice callouts              | None                    | 4 callouts    |

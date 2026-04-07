@@ -192,9 +192,6 @@ class MissileEvasionEnv(gym.Env):
         if not self._missile_launched and self._step_count >= self.missile_fire_delay:
             self._fire_enemy_missile()
 
-        # Gear should always be up in flight — force retract every step
-        df.retract_gear(self.ally_id)
-
         # Single round-trip: apply controls + advance sim n frames + return state
         if n > 1:
             plane_state = df.step_n(
@@ -353,34 +350,20 @@ class MissileEvasionEnv(gym.Env):
         elif alt > 9000:
             reward -= 1.0
 
-        # Distance-based reward: reward increasing distance from active missiles,
-        # penalize missiles closing in
+        # Distance-based shaping: small bounded bonus for keeping away from
+        # active missiles.  Clamped to [0, 0.5] per missile to prevent the
+        # reward scale from blowing up the critic.
         a_pos = np.array(plane["position"], dtype=np.float32)
         for ms in missile_states:
             if not ms.get("active", False) or ms.get("destroyed", False):
                 continue
-            if "position" not in ms or "move_vector" not in ms:
+            if "position" not in ms:
                 continue
 
             m_pos = np.array(ms["position"], dtype=np.float32)
-            m_vel = np.array(ms["move_vector"], dtype=np.float32)
-            a_vel = np.array(plane["move_vector"], dtype=np.float32)
-
             distance = float(np.linalg.norm(m_pos - a_pos))
-            diff = m_pos - a_pos
-            diff_norm = np.linalg.norm(diff)
-            if diff_norm > 1e-6:
-                # Positive = missile approaching, negative = missile receding
-                closing_rate = float(np.dot(m_vel - a_vel, diff / diff_norm))
-            else:
-                closing_rate = 0.0
-
-            # Reward for missile moving away, penalize for closing in
-            # Scale by 1/NORM_MISSILE_SPEED to keep reward magnitude reasonable
-            reward -= closing_rate / NORM_MISSILE_SPEED
-
-            # Bonus for maintaining distance (scaled so ~2km = +0.5)
-            reward += min(distance / 4000.0, 1.0) * 0.5
+            # Smooth ramp: 0 at 0m, 0.5 at 2km+
+            reward += min(distance / 4000.0, 0.5)
 
         # Check if hit by missile (health dropped)
         if health < self._initial_health - 0.01:

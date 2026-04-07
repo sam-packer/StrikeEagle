@@ -7,21 +7,21 @@ that wraps the HarFang3D Dogfight Sandbox for RL training.
 
 ## Observation Space (27 dimensions, float32)
 
-| Index | Feature                         | Normalization | Description                         |
-|-------|---------------------------------|---------------|-------------------------------------|
-| 0-2   | Position (x, y, z)              | / 10,000      | Agent world position in metres      |
-| 3-5   | Velocity (vx, vy, vz)           | / 800         | Agent velocity vector in m/s        |
-| 6-8   | Euler angles (roll, pitch, yaw) | / pi          | Agent orientation in radians        |
-| 9     | Speed (scalar)                  | / 800         | Total linear speed in m/s           |
-| 10    | Altitude                        | / 10,000      | Height above sea level in metres    |
-| 11-13 | Missile 1 relative position     | / 20,000      | (missile_pos - agent_pos) vector    |
-| 14-16 | Missile 1 relative velocity     | / 2,000       | (missile_vel - agent_vel) vector    |
-| 17    | Missile 1 distance              | / 20,000      | Euclidean distance to missile       |
+| Index | Feature                         | Normalization | Description                           |
+|-------|---------------------------------|---------------|---------------------------------------|
+| 0-2   | Position (x, y, z)              | / 10,000      | Agent world position in metres        |
+| 3-5   | Velocity (vx, vy, vz)           | / 800         | Agent velocity vector in m/s          |
+| 6-8   | Euler angles (roll, pitch, yaw) | / pi          | Agent orientation in radians          |
+| 9     | Speed (scalar)                  | / 800         | Total linear speed in m/s             |
+| 10    | Altitude                        | / 10,000      | Height above sea level in metres      |
+| 11-13 | Missile 1 relative position     | / 20,000      | (missile_pos - agent_pos) vector      |
+| 14-16 | Missile 1 relative velocity     | / 2,000       | (missile_vel - agent_vel) vector      |
+| 17    | Missile 1 distance              | / 20,000      | Euclidean distance to missile         |
 | 18    | Missile 1 closing rate          | / 2,000       | Rate of distance change (+ = closing) |
-| 19-21 | Missile 2 relative position     | / 20,000      | Same as above for SAM missile       |
-| 22-24 | Missile 2 relative velocity     | / 2,000       | Same as above for SAM missile       |
-| 25    | Missile 2 distance              | / 20,000      | Same as above for SAM missile       |
-| 26    | Missile 2 closing rate          | / 2,000       | Same as above for SAM missile       |
+| 19-21 | Missile 2 relative position     | / 20,000      | Same as above for SAM missile         |
+| 22-24 | Missile 2 relative velocity     | / 2,000       | Same as above for SAM missile         |
+| 25    | Missile 2 distance              | / 20,000      | Same as above for SAM missile         |
+| 26    | Missile 2 closing rate          | / 2,000       | Same as above for SAM missile         |
 
 Missile observations are populated from live `get_missile_state` queries each
 step. Slots for missiles that haven't been fired yet or are already
@@ -76,12 +76,12 @@ Each episode configures the scenario:
 
 ## Termination Conditions
 
-| Condition      | Type       | When                                           |
-|----------------|------------|-------------------------------------------------|
-| Health dropped | terminated | `health_level < 0.99`                           |
-| Crashed        | terminated | `crashed` flag or altitude < 50m                |
-| Missile evaded | terminated | All tracked missiles destroyed or deactivated   |
-| Max steps      | truncated  | `step_count >= max_steps` (default 1500)        |
+| Condition      | Type       | When                                          |
+|----------------|------------|-----------------------------------------------|
+| Health dropped | terminated | `health_level < 0.99`                         |
+| Crashed        | terminated | `crashed` flag or altitude < 50m              |
+| Missile evaded | terminated | All tracked missiles destroyed or deactivated |
+| Max steps      | truncated  | `step_count >= max_steps` (default 1500)      |
 
 ## Evasion Detection
 

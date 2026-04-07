@@ -18,8 +18,8 @@ cd refs/dogfight-sandbox-hg2
 # Terminal 2: Verify connection
 uv run diagnose
 
-# Terminal 3: Train
-uv run train --algo sac --total-timesteps 200000
+# Terminal 3: Train (action-repeat 4 is default, so divide timesteps by 4)
+uv run train --algo sac --total-timesteps 50000
 ```
 
 ## Training Commands
@@ -36,7 +36,8 @@ uv run train --algo sac --total-timesteps 500000 --checkpoint-freq 10000
 
 ### Resume from checkpoint
 ```bash
-uv run train --resume checkpoints/missile_evasion_50000_steps.zip
+# Trains for --total-timesteps MORE steps from this checkpoint
+uv run train --resume checkpoints/missile_evasion_50000_steps.zip --total-timesteps 50000
 ```
 
 ### Action repeat (frame skipping)

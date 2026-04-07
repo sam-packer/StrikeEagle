@@ -39,13 +39,14 @@ The sandbox handles:
 Our client library communicates with the sandbox:
 
 - **`socket_lib.py`** - TCP socket layer with `TCP_NODELAY`, batched writes
-- **`dogfight_client.py`** - ~50 API wrappers + custom `STEP` command
+- **`dogfight_client.py`** - ~50 API wrappers + custom `STEP`/`STEP_N` commands
 - **`net_utils.py`** - Default host configuration (localhost)
+- **`wrappers.py`** - `ActionRepeat` wrapper for frame skipping via `STEP_N`
 
-The critical optimization is the `STEP` command: a custom server-side command
-that applies controls, advances physics, and returns aircraft state in a single
-TCP round-trip. Without this, each env step required ~11 network operations.
-With it: 1.
+The critical optimizations are the `STEP` and `STEP_N` commands: custom
+server-side commands that apply controls, advance physics (N frames for
+`STEP_N`), and return aircraft state in a single TCP round-trip. Without
+these, each env step required ~11 network operations. With them: 1.
 
 ### Layer 3: RL Training (Gymnasium + Stable-Baselines3)
 
@@ -60,14 +61,17 @@ With it: 1.
 Agent                    Env                      Sandbox Server
   |                       |                            |
   |-- action[4] --------->|                            |
-  |                       |-- STEP(pitch,roll,yaw,     |
-  |                       |   thrust) --------------->|
+  |                       |-- STEP_N(pitch,roll,yaw,   |
+  |                       |   thrust, n=4) ---------->|
   |                       |                            |-- apply controls
-  |                       |                            |-- main.update()
+  |                       |                            |-- main.update() x N
   |                       |                            |   (physics + render)
   |                       |<-- plane_state dict -------|
   |                       |                            |
-  |                       |-- build obs[19]            |
+  |                       |-- GET_MISSILE_STATE ------>|
+  |                       |<-- missile_state dict -----|  (per tracked missile)
+  |                       |                            |
+  |                       |-- build obs[27]            |
   |                       |-- compute reward           |
   |                       |-- check termination        |
   |                       |                            |
@@ -91,7 +95,7 @@ Agent                    Env                      Sandbox Server
 5. **Termination**: Episode ends when:
     - Agent health drops (missile hit) → reward -100
     - Agent crashes (altitude < 50m) → reward -100
-    - Agent survives 250 steps post-fire → reward +100 (evaded)
+    - All tracked missiles destroyed/deactivated → reward +100 (evaded)
     - Max steps reached → reward +50
 
 ## Training Configuration
