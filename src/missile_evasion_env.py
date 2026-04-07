@@ -3,7 +3,7 @@
 The agent controls a fighter jet and must evade incoming missiles fired by an
 enemy aircraft.  The enemy is placed nearby, given a target lock on the agent,
 and commanded to fire a missile at episode start.  The agent's job is to
-survive until the missile expires, misses, or is otherwise neutralised.
+survive until the missiles are actually gone (destroyed/deactivated).
 """
 
 import math
@@ -29,8 +29,8 @@ NORM_MISSILE_SPEED = 2_000.0
 ALT_MIN = 500.0
 ALT_MAX = 10_000.0
 
-# Maximum number of missiles we track in the observation
-MAX_MISSILES = 1
+# Maximum number of missiles we track in the observation (AAM + SAM)
+MAX_MISSILES = 2
 
 # Per-missile observation: rel_pos(3) + rel_vel(3) + distance(1) + closing_rate(1)
 MISSILE_OBS_DIM = 8
@@ -38,7 +38,7 @@ MISSILE_OBS_DIM = 8
 # Agent obs: pos(3) + vel(3) + euler(3) + speed(1) + altitude(1) = 11
 AGENT_OBS_DIM = 11
 
-OBS_DIM = AGENT_OBS_DIM + MAX_MISSILES * MISSILE_OBS_DIM  # 19
+OBS_DIM = AGENT_OBS_DIM + MAX_MISSILES * MISSILE_OBS_DIM  # 27
 
 # Number of sim sub-steps per env.step() when rendering is on.
 # In renderless mode we use 1 because each update_scene call is one physics
@@ -46,9 +46,9 @@ OBS_DIM = AGENT_OBS_DIM + MAX_MISSILES * MISSILE_OBS_DIM  # 19
 RENDER_SUBSTEPS = 8
 RENDERLESS_SUBSTEPS = 1
 
-
-# Steps after missile fire to consider it evaded if still alive (~8 seconds at 30Hz)
-MISSILE_SURVIVAL_WINDOW = 250
+# Minimum steps after missile fire before we start checking missile state,
+# giving the sim time to register the missile objects.
+MISSILE_SETTLE_STEPS = 5
 
 
 class MissileEvasionEnv(gym.Env):
@@ -95,9 +95,11 @@ class MissileEvasionEnv(gym.Env):
         self._step_count = 0
         self._missile_launched = False
         self._missile_fire_step = 0
-        self._active_missile_id = None
+        self._tracked_missile_ids: list[str] = []
         self._initial_health = 1.0
         self._substeps = RENDERLESS_SUBSTEPS if renderless else RENDER_SUBSTEPS
+        # Snapshot of missile IDs before firing, so we can diff to find new ones
+        self._pre_fire_missile_ids: set[str] = set()
 
     # ------------------------------------------------------------------
     # Connection helpers
@@ -131,7 +133,7 @@ class MissileEvasionEnv(gym.Env):
         self._step_count = 0
         self._missile_launched = False
         self._missile_fire_step = 0
-        self._active_missile_id = None
+        self._tracked_missile_ids = []
 
         # Reset both aircraft
         df.reset_machine(self.ally_id)
@@ -175,6 +177,9 @@ class MissileEvasionEnv(gym.Env):
         df.get_plane_state(self.ally_id)
         df.update_scene()
 
+        # Snapshot existing missile IDs before firing so we can diff later
+        self._pre_fire_missile_ids = set(df.get_missiles_list())
+
         self._initial_health = 1.0
 
         obs = self._get_obs()
@@ -206,12 +211,20 @@ class MissileEvasionEnv(gym.Env):
             )
         health = plane_state.get("health_level", 1.0)
 
-        # NOTE: get_missile_state crashes the sandbox server for fired missiles,
-        # so we don't track missile position at all. Evasion is detected purely
-        # via health monitoring. Missile obs dimensions are always zeros.
-        obs = self._build_obs(plane_state, None)
+        # Query missile states
+        missile_states = self._get_missile_states()
+
+        # Discover newly fired missiles if we haven't found them yet
+        if self._missile_launched and not self._tracked_missile_ids:
+            steps_since_fire = self._step_count - self._missile_fire_step
+            if steps_since_fire >= MISSILE_SETTLE_STEPS:
+                current_ids = set(df.get_missiles_list())
+                new_ids = current_ids - self._pre_fire_missile_ids
+                self._tracked_missile_ids = list(new_ids)
+
+        obs = self._build_obs(plane_state, missile_states)
         reward, terminated, truncated, info = self._compute_reward_and_done(
-            action, plane_state, health
+            action, plane_state, health, missile_states
         )
 
         return obs, reward, terminated, truncated, info
@@ -227,7 +240,6 @@ class MissileEvasionEnv(gym.Env):
     def _fire_enemy_missile(self):
         """Fire both AAM (from enemy aircraft) and SAM (from ground launcher)."""
         # Fire AAM from enemy aircraft
-        enemy_missiles = df.get_machine_missiles_list(self.enemy_id)
         slots = df.get_missiles_device_slots_state(self.enemy_id)
         missile_slots = slots.get("missiles_slots", [])
 
@@ -237,7 +249,6 @@ class MissileEvasionEnv(gym.Env):
                 break
 
         # Fire SAM from ground launcher
-        sam_missiles = df.get_machine_missiles_list(self.sam_id)
         sam_slots = df.get_missiles_device_slots_state(self.sam_id)
         sam_missile_slots = sam_slots.get("missiles_slots", [])
 
@@ -249,12 +260,30 @@ class MissileEvasionEnv(gym.Env):
         self._missile_launched = True
         self._missile_fire_step = self._step_count
 
+    def _get_missile_states(self) -> list[dict]:
+        """Query state for all tracked missiles. Returns list of state dicts."""
+        states = []
+        for missile_id in self._tracked_missile_ids:
+            state = df.get_missile_state(missile_id)
+            state["missile_id"] = missile_id
+            states.append(state)
+        return states
+
+    def _all_missiles_gone(self, missile_states: list[dict]) -> bool:
+        """True when every tracked missile is destroyed or deactivated."""
+        if not self._tracked_missile_ids:
+            return False  # Haven't discovered them yet
+        for ms in missile_states:
+            if ms.get("active", False) and not ms.get("destroyed", False):
+                return False
+        return True
+
     def _get_obs(self):
         """Query state and build obs — used only by reset()."""
         plane_state = df.get_plane_state(self.ally_id)
-        return self._build_obs(plane_state, None)
+        return self._build_obs(plane_state, [])
 
-    def _build_obs(self, plane, missile_state):
+    def _build_obs(self, plane, missile_states: list[dict]):
         """Build the flat observation vector from cached state dicts."""
         pos = np.array(plane["position"], dtype=np.float32) / NORM_POS
         vel = np.array(plane["move_vector"], dtype=np.float32) / NORM_SPEED
@@ -264,39 +293,42 @@ class MissileEvasionEnv(gym.Env):
 
         agent_obs = np.concatenate([pos, vel, euler, [speed], [alt]])
 
-        # Missile observations
+        # Missile observations — fill slots for up to MAX_MISSILES
         missile_obs = np.zeros(MAX_MISSILES * MISSILE_OBS_DIM, dtype=np.float32)
+        a_pos = np.array(plane["position"], dtype=np.float32)
+        a_vel = np.array(plane["move_vector"], dtype=np.float32)
 
-        if missile_state is not None and self._active_missile_id is not None:
-            if missile_state.get("active") and not missile_state.get("destroyed"):
-                m_pos = np.array(missile_state["position"], dtype=np.float32)
-                m_vel = np.array(missile_state["move_vector"], dtype=np.float32)
-                a_pos = np.array(plane["position"], dtype=np.float32)
-                a_vel = np.array(plane["move_vector"], dtype=np.float32)
+        for i, ms in enumerate(missile_states[:MAX_MISSILES]):
+            if not ms.get("active", False) or ms.get("destroyed", False):
+                continue
+            if "position" not in ms:
+                continue
 
-                rel_pos = (m_pos - a_pos) / NORM_MISSILE_POS
-                rel_vel = (m_vel - a_vel) / NORM_MISSILE_SPEED
-                distance = np.float32(
-                    np.linalg.norm(m_pos - a_pos) / NORM_MISSILE_POS
-                )
-                diff = m_pos - a_pos
-                diff_norm = np.linalg.norm(diff)
-                if diff_norm > 1e-6:
-                    closing_rate = np.float32(
-                        np.dot(m_vel - a_vel, diff / diff_norm) / NORM_MISSILE_SPEED
-                    )
-                else:
-                    closing_rate = np.float32(0.0)
+            m_pos = np.array(ms["position"], dtype=np.float32)
+            m_vel = np.array(ms["move_vector"], dtype=np.float32)
 
-                missile_obs[:MISSILE_OBS_DIM] = np.concatenate(
-                    [rel_pos, rel_vel, [distance], [closing_rate]]
+            rel_pos = (m_pos - a_pos) / NORM_MISSILE_POS
+            rel_vel = (m_vel - a_vel) / NORM_MISSILE_SPEED
+            distance = np.float32(
+                np.linalg.norm(m_pos - a_pos) / NORM_MISSILE_POS
+            )
+            diff = m_pos - a_pos
+            diff_norm = np.linalg.norm(diff)
+            if diff_norm > 1e-6:
+                closing_rate = np.float32(
+                    np.dot(m_vel - a_vel, diff / diff_norm) / NORM_MISSILE_SPEED
                 )
             else:
-                self._active_missile_id = None
+                closing_rate = np.float32(0.0)
+
+            offset = i * MISSILE_OBS_DIM
+            missile_obs[offset:offset + MISSILE_OBS_DIM] = np.concatenate(
+                [rel_pos, rel_vel, [distance], [closing_rate]]
+            )
 
         return np.concatenate([agent_obs, missile_obs])
 
-    def _compute_reward_and_done(self, action, plane, health):
+    def _compute_reward_and_done(self, action, plane, health, missile_states):
         info = {}
         reward = 0.0
         terminated = False
@@ -321,6 +353,35 @@ class MissileEvasionEnv(gym.Env):
         elif alt > 9000:
             reward -= 1.0
 
+        # Distance-based reward: reward increasing distance from active missiles,
+        # penalize missiles closing in
+        a_pos = np.array(plane["position"], dtype=np.float32)
+        for ms in missile_states:
+            if not ms.get("active", False) or ms.get("destroyed", False):
+                continue
+            if "position" not in ms or "move_vector" not in ms:
+                continue
+
+            m_pos = np.array(ms["position"], dtype=np.float32)
+            m_vel = np.array(ms["move_vector"], dtype=np.float32)
+            a_vel = np.array(plane["move_vector"], dtype=np.float32)
+
+            distance = float(np.linalg.norm(m_pos - a_pos))
+            diff = m_pos - a_pos
+            diff_norm = np.linalg.norm(diff)
+            if diff_norm > 1e-6:
+                # Positive = missile approaching, negative = missile receding
+                closing_rate = float(np.dot(m_vel - a_vel, diff / diff_norm))
+            else:
+                closing_rate = 0.0
+
+            # Reward for missile moving away, penalize for closing in
+            # Scale by 1/NORM_MISSILE_SPEED to keep reward magnitude reasonable
+            reward -= closing_rate / NORM_MISSILE_SPEED
+
+            # Bonus for maintaining distance (scaled so ~2km = +0.5)
+            reward += min(distance / 4000.0, 1.0) * 0.5
+
         # Check if hit by missile (health dropped)
         if health < self._initial_health - 0.01:
             reward -= 100.0
@@ -339,14 +400,11 @@ class MissileEvasionEnv(gym.Env):
             terminated = True
             info["outcome"] = "ground_collision"
 
-        # Evasion detection: if missile was fired and we've survived long enough
-        # without taking damage, the missile missed. Typical missile flight time
-        # is ~10-15 seconds = ~600-900 sim steps at 60Hz.
-        # We use a conservative 500 steps (~8 seconds) as the survival window.
+        # Evasion: only when all missiles are actually gone
         if (
             self._missile_launched
             and not terminated
-            and (self._step_count - self._missile_fire_step) >= MISSILE_SURVIVAL_WINDOW
+            and self._all_missiles_gone(missile_states)
         ):
             reward += 100.0
             terminated = True

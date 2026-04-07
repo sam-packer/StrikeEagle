@@ -873,7 +873,7 @@ class Missile(Destroyable_Machine):
                               })
 
         self.target = None
-        self.target_collision_test_distance_max = 100
+        self.target_collision_test_distance_max = 500
 
         # Missile constantes:
         self.thrust_force = 100

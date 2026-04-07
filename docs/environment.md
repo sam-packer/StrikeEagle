@@ -5,23 +5,27 @@
 `src/missile_evasion_env.py` implements a Gymnasium-compatible environment
 that wraps the HarFang3D Dogfight Sandbox for RL training.
 
-## Observation Space (19 dimensions, float32)
+## Observation Space (27 dimensions, float32)
 
-| Index | Feature                         | Normalization | Description                      |
-|-------|---------------------------------|---------------|----------------------------------|
-| 0-2   | Position (x, y, z)              | / 10,000      | Agent world position in metres   |
-| 3-5   | Velocity (vx, vy, vz)           | / 800         | Agent velocity vector in m/s     |
-| 6-8   | Euler angles (roll, pitch, yaw) | / pi          | Agent orientation in radians     |
-| 9     | Speed (scalar)                  | / 800         | Total linear speed in m/s        |
-| 10    | Altitude                        | / 10,000      | Height above sea level in metres |
-| 11-17 | Missile tracking (reserved)     | various       | Currently zeros (see note)       |
-| 18    | Missile closing rate (reserved) | / 2,000       | Currently zero                   |
+| Index | Feature                         | Normalization | Description                         |
+|-------|---------------------------------|---------------|-------------------------------------|
+| 0-2   | Position (x, y, z)              | / 10,000      | Agent world position in metres      |
+| 3-5   | Velocity (vx, vy, vz)           | / 800         | Agent velocity vector in m/s        |
+| 6-8   | Euler angles (roll, pitch, yaw) | / pi          | Agent orientation in radians        |
+| 9     | Speed (scalar)                  | / 800         | Total linear speed in m/s           |
+| 10    | Altitude                        | / 10,000      | Height above sea level in metres    |
+| 11-13 | Missile 1 relative position     | / 20,000      | (missile_pos - agent_pos) vector    |
+| 14-16 | Missile 1 relative velocity     | / 2,000       | (missile_vel - agent_vel) vector    |
+| 17    | Missile 1 distance              | / 20,000      | Euclidean distance to missile       |
+| 18    | Missile 1 closing rate          | / 2,000       | Rate of distance change (+ = closing) |
+| 19-21 | Missile 2 relative position     | / 20,000      | Same as above for SAM missile       |
+| 22-24 | Missile 2 relative velocity     | / 2,000       | Same as above for SAM missile       |
+| 25    | Missile 2 distance              | / 20,000      | Same as above for SAM missile       |
+| 26    | Missile 2 closing rate          | / 2,000       | Same as above for SAM missile       |
 
-**Note on missile observations:** The upstream sandbox's `get_missile_state`
-command crashes the server when querying recently-fired missiles (the missile
-object has uninitialized attributes). Our server patch returns a safe fallback,
-but the missile state is unreliable enough that we zero these dimensions and
-detect evasion via health monitoring instead.
+Missile observations are populated from live `get_missile_state` queries each
+step. Slots for missiles that haven't been fired yet or are already
+destroyed/deactivated are filled with zeros.
 
 ## Action Space (4 dimensions, float32)
 
@@ -34,58 +38,62 @@ detect evasion via health monitoring instead.
 
 ## Reward Function
 
-The reward is computed per step from the cached plane state and health:
+The reward is computed per step from plane state, health, and missile state:
 
-| Condition                                | Reward                    | Purpose                          |
-|------------------------------------------|---------------------------|----------------------------------|
-| Each timestep alive                      | +1.0                      | Incentivize survival             |
-| Missile evaded (250 steps post-fire)     | +100.0                    | Big bonus for successful evasion |
-| Survived to max steps                    | +50.0                     | Partial credit for endurance     |
-| Hit by missile (health drops)            | -100.0                    | Strong penalty for failure       |
-| Crashed (altitude < 50m or crashed flag) | -100.0                    | Don't fly into the ground        |
-| Extreme manoeuvres                       | -0.05 * (p^2 + r^2 + y^2) | Discourage random flailing       |
-| Low altitude (< 500m)                    | -5.0                      | Hard floor penalty               |
-| Low altitude (500-1000m)                 | -1.0                      | Soft floor penalty               |
-| High altitude (> 10,000m)                | -5.0                      | Hard ceiling penalty             |
-| High altitude (9,000-10,000m)            | -1.0                      | Soft ceiling penalty             |
+| Condition                                | Reward                    | Purpose                                 |
+|------------------------------------------|---------------------------|-----------------------------------------|
+| Each timestep alive                      | +1.0                      | Incentivize survival                    |
+| Missile evaded (all missiles gone)       | +100.0                    | Big bonus for confirmed evasion         |
+| Survived to max steps                    | +50.0                     | Partial credit for endurance            |
+| Hit by missile (health drops)            | -100.0                    | Strong penalty for failure              |
+| Crashed (altitude < 50m or crashed flag) | -100.0                    | Don't fly into the ground               |
+| Extreme manoeuvres                       | -0.05 * (p^2 + r^2 + y^2) | Discourage random flailing              |
+| Missile closing in                       | -(closing_rate / 2000)    | Penalize letting missiles get closer    |
+| Missile distance bonus                   | +0.5 * min(dist/4000, 1)  | Reward maintaining distance per missile |
+| Low altitude (< 500m)                    | -5.0                      | Hard floor penalty                      |
+| Low altitude (500-1000m)                 | -1.0                      | Soft floor penalty                      |
+| High altitude (> 10,000m)                | -5.0                      | Hard ceiling penalty                    |
+| High altitude (9,000-10,000m)            | -1.0                      | Soft ceiling penalty                    |
 
 ## Episode Setup
 
 Each episode configures the scenario:
 
 1. **Agent (F16):** Spawns at ~4000m altitude with slight random offset,
-   flying at 300 m/s, thrust at 100%, gear retracted.
+   flying at 300 m/s, thrust at 100%, gear retracted (forced every step).
 
 2. **Enemy (Eurofighter):** Spawns 2km behind the agent at the same altitude,
    flying at 300 m/s. Controls set to fly straight (no maneuvering).
 
-3. **Targeting:** Enemy's targeting device is locked onto the agent via
-   `set_target_id`.
+3. **SAM launcher:** Ground-based missile launcher, also targeted at agent.
 
-4. **Missiles:** Enemy is rearmed with full missile loadout. After 30 steps
-   (~1 second of sim time), the enemy fires from the first available slot.
-   The missile's guidance target is explicitly set to the agent via
-   `set_missile_target`.
+4. **Targeting:** Enemy's targeting device is locked onto the agent via
+   `set_target_id`. SAM launcher also targeted.
+
+5. **Missiles:** Both enemy and SAM are rearmed with full loadout. After 30
+   steps (~1 second of sim time), both fire from the first available slot.
+   Missile guidance targets are explicitly set to the agent.
 
 ## Termination Conditions
 
-| Condition      | Type       | When                                     |
-|----------------|------------|------------------------------------------|
-| Health dropped | terminated | `health_level < 0.99`                    |
-| Crashed        | terminated | `crashed` flag or altitude < 50m         |
-| Missile evaded | terminated | 250 steps since fire, still alive        |
-| Max steps      | truncated  | `step_count >= max_steps` (default 1500) |
+| Condition      | Type       | When                                           |
+|----------------|------------|-------------------------------------------------|
+| Health dropped | terminated | `health_level < 0.99`                           |
+| Crashed        | terminated | `crashed` flag or altitude < 50m                |
+| Missile evaded | terminated | All tracked missiles destroyed or deactivated   |
+| Max steps      | truncated  | `step_count >= max_steps` (default 1500)        |
 
 ## Evasion Detection
 
-Since we cannot reliably query missile state, evasion is detected by
-survival time: if the agent survives 250 steps (~8.3 seconds at 1/30s
-timestep) after the missile fires without taking damage, the missile is
-considered to have missed.
+Evasion is detected by querying actual missile state from the sandbox each
+step. After firing, the env discovers the new missile IDs by diffing
+`get_missiles_list` against a pre-fire snapshot. Each step, it queries
+`get_missile_state` for each tracked missile.
 
-This is conservative — most missiles in the sim have fuel for 5-10 seconds
-of flight. An agent that survives 8+ seconds after launch has almost
-certainly evaded.
+The episode ends with "evaded" only when **every tracked missile** reports
+`active: false` or `destroyed: true` — meaning it has actually
+self-destructed, hit the ground, or run out of fuel. No time-based
+shortcuts.
 
 ## Sim Timestep
 
@@ -96,7 +104,7 @@ training throughput.
 
 ## Network Efficiency
 
-Each `step()` call uses our custom `STEP` server command: one TCP round-trip
-that applies controls, advances physics, and returns the new plane state.
-This is the minimum possible network overhead — equivalent to a local
-function call in terms of data flow.
+Each `step()` call uses our custom `STEP` (or `STEP_N` with action repeat)
+server command: one TCP round-trip that applies controls, advances physics,
+and returns the new plane state. Missile state queries add one round-trip
+per tracked missile per step.
