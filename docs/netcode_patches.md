@@ -1,11 +1,13 @@
-# Strike Eagle - Netcode Patches
+# Strike Eagle - Sandbox Patches
 
 ## Overview
 
 The upstream HarFang3D Dogfight Sandbox has several critical bugs in its
-network server that make it unsuitable for RL training. We patched the source
-to fix these issues, added new commands for performance and camera control,
-and optimized the transport layer.
+network server that make it unsuitable for RL training, and lacks cockpit
+audio features expected in a combat sim. We patched the source to fix these
+issues, added new network commands for performance and camera control,
+implemented a full RWR (Radar Warning Receiver) audio system, and added
+Betty voice callouts.
 
 All changes are in `refs/dogfight-sandbox-hg2/source/`.
 
@@ -181,6 +183,65 @@ Added `send_messages_batch()` that concatenates multiple framed messages into
 a single `sendall()` call, reducing kernel syscall overhead for fire-and-forget
 command sequences.
 
+## Missile Guidance Fix (network_server.py)
+
+**Problem:** `FIRE_MISSILE` only gave the missile a guidance target if the
+aircraft's `TargettingDevice` had `target_locked = True`. In network mode,
+the targeting device rarely achieves lock because there's no continuous
+radar simulation — so missiles always launched unguided (flying straight).
+
+**Fix:** `FIRE_MISSILE` now accepts an optional `target_id` parameter. When
+provided, it force-sets `td.target_locked = True` before firing, guaranteeing
+the missile gets proper guidance regardless of lock status.
+
+## Cockpit Audio System (Machines.py)
+
+### RWR (Radar Warning Receiver)
+
+A full threat warning system added to `AircraftSFX`:
+
+| Sound | File | Trigger |
+|-------|------|---------|
+| Contact beep | `rwr_contact.wav` | New threat detected |
+| Tracking tone (loop) | `rwr_tracking.wav` | Enemy radar locked on aircraft |
+| Missile warning (loop) | `missile_warning.wav` | Active missile targeting aircraft |
+| Clear tone | `rwr_clear.wav` | Threat gone (missile missed or lock broken) |
+
+The system uses a state machine (`none` → `tracking` → `missile`) with
+proper transitions — when state changes, the old sound stops, a contact
+beep plays, and the new looping tone starts. When threat clears, the clear
+tone plays once.
+
+### Betty Voice Callouts
+
+Synthetic voice warnings added to `AircraftSFX.update_sfx()`:
+
+| Sound | File | Trigger | Cooldown |
+|-------|------|---------|----------|
+| "PULL UP! PULL UP!" | `betty_pullup.wav` | Altitude < 300m while airborne | 4s |
+| "ALTITUDE!" | `betty_altitude.wav` | Altitude < 800m while airborne | 5s |
+| "BINGO!" | `betty_bingo.wav` | Thrust < 10% while airborne | 8s |
+| "FLIGHT CONTROLS!" | `betty_flight_controls.wav` + `deedle_deedle.wav` | Health < 70% (battle damage) | 6s |
+
+All callouts require `is_airborne` (speed > 50 m/s and `flag_landed` is
+False) to prevent triggering on the carrier deck.
+
+### Custom SFX Files
+
+Located in `refs/dogfight-sandbox-hg2/source/assets/sfx/`:
+
+| File | Source | Description |
+|------|--------|-------------|
+| `rwr_contact.wav` | Extracted from F/A-18 ALR-67 | Single contact beep |
+| `rwr_tracking.wav` | Extracted from F/A-18 ALR-67 | Slow radar tracking tone |
+| `missile_warning.wav` | Extracted from F/A-18 ALR-67 | Fast missile launch warning |
+| `rwr_clear.wav` | Extracted from F/A-18 ALR-67 | Threat clear tone |
+| `betty_altitude.wav` | Voice callout | "ALTITUDE!" |
+| `betty_pullup.wav` | Voice callout | "PULL UP! PULL UP!" |
+| `betty_bingo.wav` | Voice callout | "BINGO!" |
+| `betty_flight_controls.wav` | Voice callout | "FLIGHT CONTROLS!" |
+| `deedle_deedle.wav` | Warning tone | Deedle-deedle alert chime |
+
 ## Performance Summary
 
 | Metric                            | Before patches          | After patches |
@@ -191,3 +252,6 @@ command sequences.
 | Server crash on bad missile query | Always                  | Never         |
 | Rendered mode stability           | Broken (race condition) | Stable        |
 | Console spam with disable_log     | Yes                     | No            |
+| Missile guidance in network mode  | Broken (always unguided)| Working       |
+| Cockpit RWR audio                 | None                    | Full system   |
+| Betty voice callouts              | None                    | 4 callouts    |

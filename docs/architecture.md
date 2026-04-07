@@ -27,10 +27,12 @@ protocol. We run a patched fork with significant network server improvements
 The sandbox handles:
 
 - Aircraft physics (lift, drag, thrust, gravity)
-- Missile guidance and tracking
+- Missile guidance and tracking (patched for network mode reliability)
 - Collision detection and damage
 - 3D rendering (when not in renderless mode)
 - Sound effects (engine, explosions, wind)
+- RWR threat warning system (custom: contact, tracking, missile, clear tones)
+- Betty voice callouts (custom: PULL UP, ALTITUDE, BINGO, FLIGHT CONTROLS)
 
 ### Layer 2: Network Client (src/)
 

@@ -267,28 +267,33 @@ and `demo` scripts use rendered mode so you can watch.
 We applied the following fixes to the sandbox source
 (`refs/dogfight-sandbox-hg2/source/`):
 
-**`network_server.py`:**
+**Network stability** (`network_server.py`, `master.py`, `main.py`):
 
-- **Proper disconnect handling** — clean disconnects now print
-  `"Client disconnected (clean)"` instead of `"server_update ERROR"`
-- **Per-command error isolation** — a failing command logs the full traceback
-  but no longer kills the connection
-- **Crash-safe `get_missile_state`** — returns a safe fallback if the missile
-  is missing or uninitialized (e.g. just fired), instead of crashing the server
-- **Log gating** — `get_planes_list`, `get_missiles_list`, and
-  `get_missile_launchers_list` now respect `disable_log()`
-- **Synchronous rendered-mode `update_scene`** — the network thread now blocks
-  until the main thread finishes `Main.update()`, preventing race conditions
-  between command processing and physics/rendering
+- Proper disconnect handling with clean/error distinction
+- Per-command error isolation with full tracebacks
+- Crash-safe `get_missile_state` for fired missiles
+- Log gating for `get_planes_list`, `get_missiles_list`, etc.
+- Thread-safe rendered-mode `update_scene` via `threading.Event`
+- Missile guidance fix: `FIRE_MISSILE` accepts `target_id` to force lock
 
-**`master.py`:**
+**New network commands** (`network_server.py`):
 
-- Added `threading.Event` (`client_update_done`) for synchronization between
-  the network thread and the main render loop
+- `STEP` — apply controls + advance sim + return state in one round-trip
+- `SET_CAMERA_TRACK` — camera follows aircraft with audio listener
+- `SET_TRACK_VIEW` — camera angle (back, front, left, right, top)
 
-**`main.py`:**
+**Cockpit audio system** (`Machines.py`):
 
-- Main loop signals `client_update_done` after each `Main.update()` call
+- RWR (Radar Warning Receiver): contact beep, tracking tone, missile warning,
+  clear tone — F/A-18 ALR-67 style sounds with state machine transitions
+- Betty voice callouts: "PULL UP!", "ALTITUDE!", "BINGO!",
+  "FLIGHT CONTROLS!" with airborne-only gating and cooldown timers
+
+**Transport** (`socket_lib.py` client + server):
+
+- TCP_NODELAY on both ends, SO_REUSEADDR on server, batched writes
+
+See `docs/netcode_patches.md` for full details with before/after code.
 
 ## Environment Design
 

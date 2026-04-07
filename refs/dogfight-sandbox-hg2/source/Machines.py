@@ -2463,25 +2463,27 @@ class AircraftSFX:
         betty_vol.volume = 0.9
 
         # "PULL UP PULL UP" — critical low altitude (below 300m)
-        if altitude < 300 and not self.aircraft.wreck and self.betty_pullup_cooldown <= 0:
+        # Only trigger when airborne (speed > 50 m/s and not landed)
+        is_airborne = self.aircraft.get_linear_speed() > 50 and not self.aircraft.flag_landed
+        if altitude < 300 and is_airborne and not self.aircraft.wreck and self.betty_pullup_cooldown <= 0:
             hg.PlayStereo(self.betty_pullup_ref, betty_vol)
             self.betty_pullup_cooldown = 4.0  # Don't repeat for 4 seconds
 
         # "ALTITUDE" — low altitude warning (below 800m)
-        elif altitude < 800 and not self.aircraft.wreck and self.betty_altitude_cooldown <= 0:
+        elif altitude < 800 and is_airborne and not self.aircraft.wreck and self.betty_altitude_cooldown <= 0:
             hg.PlayStereo(self.betty_altitude_ref, betty_vol)
             self.betty_altitude_cooldown = 5.0
 
-        # "BINGO" — low fuel / low thrust (thrust below 10% for sustained time)
-        if self.aircraft.thrust_level < 0.1 and not self.aircraft.wreck and self.betty_bingo_cooldown <= 0:
+        # "BINGO" — low speed warning (below 100 m/s ~200 knots, stall danger)
+        if is_airborne and self.aircraft.get_linear_speed() < 100 and not self.aircraft.wreck and self.betty_bingo_cooldown <= 0:
             hg.PlayStereo(self.betty_bingo_ref, betty_vol)
-            self.betty_bingo_cooldown = 8.0
+            self.betty_bingo_cooldown = 10.0
 
-        # "FLIGHT CONTROLS" + deedle — when aircraft takes damage
-        if self.aircraft.health_level < 0.7 and not self.aircraft.wreck and self.betty_damage_cooldown <= 0:
+        # "FLIGHT CONTROLS" + deedle — when aircraft takes significant damage
+        if self.aircraft.health_level < 0.5 and is_airborne and not self.aircraft.wreck and self.betty_damage_cooldown <= 0:
             hg.PlayStereo(self.deedle_deedle_ref, betty_vol)
             hg.PlayStereo(self.betty_flight_controls_ref, betty_vol)
-            self.betty_damage_cooldown = 6.0
+            self.betty_damage_cooldown = 10.0
 
         # Machine gun
         n = self.aircraft.get_machinegun_count()
