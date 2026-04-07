@@ -1,0 +1,29 @@
+{"AircraftIAInputsMapping":
+	{
+		"Keyboard":{
+			"ACTIVATE_USER_CONTROL": "K_U"
+		},
+		"Wireless Xbox Controller":{
+			"ACTIVATE_USER_CONTROL": "GB_RightThumb"
+		},
+		"Xbox Controller":{
+			"ACTIVATE_USER_CONTROL": "GB_RightThumb"
+		},
+		"Logitech Attack 3":
+		{
+			"ACTIVATE_USER_CONTROL": "LA3B_TopHead"
+		},
+		"Extreme 3D pro":
+		{
+			"ACTIVATE_USER_CONTROL": ""
+		},
+		"Wired Gamepad":
+		{
+			"ACTIVATE_USER_CONTROL": "WGPB_RThumb"
+		},
+		"USB Game Controllers":
+		{
+			"ACTIVATE_USER_CONTROL": "LA3B_TopHead"
+		}
+	}
+}
