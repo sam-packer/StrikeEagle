@@ -97,6 +97,7 @@ class MissileEvasionEnv(gym.Env):
         self._missile_fire_step = 0
         self._tracked_missile_ids: list[str] = []
         self._initial_health = 1.0
+        self._gear_retracted = False
         self._substeps = RENDERLESS_SUBSTEPS if renderless else RENDER_SUBSTEPS
         # Snapshot of missile IDs before firing, so we can diff to find new ones
         self._pre_fire_missile_ids: set[str] = set()
@@ -134,6 +135,7 @@ class MissileEvasionEnv(gym.Env):
         self._missile_launched = False
         self._missile_fire_step = 0
         self._tracked_missile_ids = []
+        self._gear_retracted = False
 
         # Reset both aircraft
         df.reset_machine(self.ally_id)
@@ -191,6 +193,11 @@ class MissileEvasionEnv(gym.Env):
         # Fire missile before advancing (so missile is in flight this frame)
         if not self._missile_launched and self._step_count >= self.missile_fire_delay:
             self._fire_enemy_missile()
+
+        # Retract gear once after the first physics frame has settled
+        if not self._gear_retracted:
+            df.retract_gear(self.ally_id)
+            self._gear_retracted = True
 
         # Single round-trip: apply controls + advance sim n frames + return state
         if n > 1:
