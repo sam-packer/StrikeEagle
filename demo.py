@@ -56,9 +56,17 @@ def main():
             time.sleep(0.02)
 
         outcome = info.get("outcome", "unknown")
+        max_g_load = info.get("max_g_load")
+        max_g_text = f", max_g={max_g_load:.2f}" if max_g_load is not None else ""
+        active_missiles_remaining = info.get("active_missiles_remaining")
+        missile_text = (
+            f", active_missiles={active_missiles_remaining}"
+            if active_missiles_remaining is not None
+            else ""
+        )
         print(
             f"Episode {ep + 1}/{args.episodes}: "
-            f"steps={step}, reward={total_reward:.1f}, outcome={outcome}"
+            f"steps={step}, reward={total_reward:.1f}, outcome={outcome}{max_g_text}{missile_text}"
         )
 
         # Keep the sim ticking so the explosion/crash animation plays out

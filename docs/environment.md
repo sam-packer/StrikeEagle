@@ -27,7 +27,7 @@ Missile observations are populated from live `get_missile_state` queries each
 step. Slots for missiles that haven't been fired yet or are already
 destroyed/deactivated are filled with zeros.
 
-## Action Space (4 dimensions, float32)
+## Action Space (5 dimensions, float32)
 
 | Index | Control | Range   | Description          |
 |-------|---------|---------|----------------------|
@@ -35,6 +35,7 @@ destroyed/deactivated are filled with zeros.
 | 1     | Roll    | [-1, 1] | Bank left/right rate |
 | 2     | Yaw     | [-1, 1] | Rudder left/right    |
 | 3     | Thrust  | [0, 1]  | Engine throttle      |
+| 4     | Gun     | [0, 1]  | Fire machine gun when > 0.5 |
 
 ## Reward Function
 
@@ -44,16 +45,37 @@ The reward is computed per step from plane state, health, and missile state:
 |------------------------------------------|---------------------------|-----------------------------------------|
 | Each timestep alive                      | +1.0                      | Incentivize survival                    |
 | Missile evaded (all missiles gone)       | +100.0                    | Big bonus for confirmed evasion         |
-| Survived to max steps                    | +50.0                     | Partial credit for endurance            |
 | Hit by missile (health drops)            | -100.0                    | Strong penalty for failure              |
 | Crashed (altitude < 50m or crashed flag) | -100.0                    | Don't fly into the ground               |
 | Extreme manoeuvres                       | -0.05 * (p^2 + r^2 + y^2) | Discourage random flailing              |
-| Missile closing in                       | -(closing_rate / 2000)    | Penalize letting missiles get closer    |
-| Missile distance bonus                   | +0.5 * min(dist/4000, 1)  | Reward maintaining distance per missile |
+| Control jerk                             | -0.02 * L2(delta action)^2| Discourage twitchy, unrealistic inputs  |
+| Closest missile distance delta           | +/- 0.001 * delta metres  | Reward opening separation               |
+| Missile approach speed                   | -0.0004 * m/s             | Penalize letting threats close quickly  |
+| Close-range missile danger               | Up to -1.0                | Stronger penalty inside 1 km            |
 | Low altitude (< 500m)                    | -5.0                      | Hard floor penalty                      |
 | Low altitude (500-1000m)                 | -1.0                      | Soft floor penalty                      |
 | High altitude (> 10,000m)                | -5.0                      | Hard ceiling penalty                    |
 | High altitude (9,000-10,000m)            | -1.0                      | Soft ceiling penalty                    |
+| Low-speed, high-pitch stall risk         | Up to -1.5                | Penalize nose-high low-energy flight    |
+| Excessive G load (> 5g soft, > 9g hard)  | Quadratic penalty         | Discourage blackout-inducing maneuvers  |
+
+## Flight-Envelope Telemetry
+
+The simulator now exposes:
+
+- **G load**: signed load factor computed from specific force in the aircraft
+  frame and returned as `g_load`.
+- **Angle of attack**: estimated from body-axis vertical/forward velocity and
+  returned as `angle_of_attack`.
+
+The env uses those values directly when available and only falls back to
+deriving them from consecutive plane states if the simulator does not provide
+them. `demo.py` prints the episode peak G load at the end, and the sandbox HUD
+shows both G and AoA during flight.
+
+Missile episodes also extend their timeout budget automatically from the live
+missiles' reported `life_delay` and `life_time`, so a launched missile gets
+enough sim time to burn out or self-destruct before the env can time out.
 
 ## Episode Setup
 
@@ -81,7 +103,7 @@ Each episode configures the scenario:
 | Health dropped | terminated | `health_level < 0.99`                         |
 | Crashed        | terminated | `crashed` flag or altitude < 50m              |
 | Missile evaded | terminated | All tracked missiles destroyed or deactivated |
-| Max steps      | truncated  | `step_count >= max_steps` (default 1500)      |
+| Max steps      | truncated  | Timeout budget reached while missiles may still be active |
 
 ## Evasion Detection
 

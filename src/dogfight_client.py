@@ -130,6 +130,18 @@ def get_machine_missiles_list(machine_id):
     return _send_recv("GET_MACHINE_MISSILES_LIST", {"machine_id": machine_id})
 
 
+def get_machine_gun_state(machine_id):
+    return _send_recv("GET_MACHINE_GUN_STATE", {"machine_id": machine_id})
+
+
+def activate_machine_gun(machine_id):
+    _send("ACTIVATE_MACHINE_GUN", {"machine_id": machine_id})
+
+
+def deactivate_machine_gun(machine_id):
+    _send("DEACTIVATE_MACHINE_GUN", {"machine_id": machine_id})
+
+
 def get_missiles_device_slots_state(machine_id):
     return _send_recv("GET_MISSILESDEVICE_SLOTS_STATE", {"machine_id": machine_id})
 

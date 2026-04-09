@@ -339,8 +339,24 @@ class HUD_Aircraft:
 		Overlays.add_text2D("Roll attitude: %d" % (aircraft.get_roll_attitude()), hg.Vec2(0.8, 0.12), 0.016, hg.Color.White * f, Main.hud_font)
 
 		ls = aircraft.get_linear_speed() * 3.6
+		g_load = aircraft.get_g_load()
+		aoa = aircraft.get_angle_of_attack()
 
 		Overlays.add_text2D("Linear speed (km/h): %d" % (ls), hg.Vec2(0.8, 0.06), 0.016, hg.Color.White * f, Main.hud_font)
+		if g_load > 5:
+			g_color = hg.Color.Red
+		elif g_load < -1.5 or g_load > 3:
+			g_color = hg.Color.Orange
+		else:
+			g_color = hg.Color.White
+		Overlays.add_text2D("Load factor (g): %.2f" % (g_load), hg.Vec2(0.8, 0.08), 0.016, g_color * f, Main.hud_font)
+		if abs(aoa) > 25:
+			aoa_color = hg.Color.Red
+		elif abs(aoa) > 18:
+			aoa_color = hg.Color.Orange
+		else:
+			aoa_color = hg.Color.White
+		Overlays.add_text2D("AoA (deg): %.1f" % (aoa), hg.Vec2(0.8, 0.10), 0.016, aoa_color * f, Main.hud_font)
 
 		if ls < aircraft.minimum_flight_speed and not aircraft.flag_landed:
 			Overlays.add_text2D("LOW SPEED", hg.Vec2(0.47, 0.13), 0.018, hg.Color(1., 0, 0, a_pulse) * f, Main.hud_font)

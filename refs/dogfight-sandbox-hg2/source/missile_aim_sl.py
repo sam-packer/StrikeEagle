@@ -22,6 +22,7 @@ class AIM_SL(Missile):
         self.drag_coeff = hg.Vec3(0.37, 0.37, 0.0003)
         self.life_delay = 20
         self.smoke_delay = 1
+        self.proximity_fuse_radius = 14
 
     def get_hit_damages(self):
         return uniform(0.25, 0.35)

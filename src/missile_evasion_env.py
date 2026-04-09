@@ -24,6 +24,8 @@ NORM_EULER = math.pi  # radians
 NORM_SPEED = 800.0  # m/s
 NORM_MISSILE_POS = 20_000.0
 NORM_MISSILE_SPEED = 2_000.0
+GRAVITY_MPS2 = 9.80665
+GRAVITY_VECTOR = np.array([0.0, -GRAVITY_MPS2, 0.0], dtype=np.float32)
 
 # Altitude safety band (metres)
 ALT_MIN = 500.0
@@ -50,12 +52,26 @@ RENDERLESS_SUBSTEPS = 1
 # giving the sim time to register the missile objects.
 MISSILE_SETTLE_STEPS = 5
 
+# Reward shaping constants.
+MISSILE_DISTANCE_DELTA_SCALE = 0.001
+MISSILE_CLOSING_PENALTY_SCALE = 0.0004
+MISSILE_DANGER_DISTANCE = 1_000.0
+MISSILE_TIMEOUT_BUFFER_SECONDS = 3.0
+G_SOFT_LIMIT = 5.0
+G_HARD_LIMIT = 9.0
+STALL_SPEED_SOFT = 150.0
+STALL_SPEED_HARD = 100.0
+STALL_PITCH_SOFT = 15.0
+STALL_PITCH_HARD = 25.0
+ACTION_SMOOTHNESS_SCALE = 0.02
+GUN_FIRE_THRESHOLD = 0.5
+
 
 class MissileEvasionEnv(gym.Env):
     """Gymnasium env: evade a missile fired by an enemy aircraft.
 
     The observation is a flat float32 vector (see OBS_DIM).
-    The action is [pitch, roll, yaw, thrust] each in [-1, 1].
+    The action is [pitch, roll, yaw, thrust, gun].
     """
 
     metadata = {"render_modes": ["human"]}
@@ -86,8 +102,8 @@ class MissileEvasionEnv(gym.Env):
             low=-np.inf, high=np.inf, shape=(OBS_DIM,), dtype=np.float32
         )
         self.action_space = gym.spaces.Box(
-            low=np.array([-1.0, -1.0, -1.0, 0.0], dtype=np.float32),
-            high=np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32),
+            low=np.array([-1.0, -1.0, -1.0, 0.0, 0.0], dtype=np.float32),
+            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
             dtype=np.float32,
         )
 
@@ -101,6 +117,18 @@ class MissileEvasionEnv(gym.Env):
         self._substeps = RENDERLESS_SUBSTEPS if renderless else RENDER_SUBSTEPS
         # Snapshot of missile IDs before firing, so we can diff to find new ones
         self._pre_fire_missile_ids: set[str] = set()
+        self._prev_plane_state: dict | None = None
+        self._prev_action: np.ndarray | None = None
+        self._prev_closest_missile_distance: float | None = None
+        self._max_g_load = 0.0
+        self._effective_max_steps = max_steps
+
+    def _normalize_action(self, action) -> np.ndarray:
+        """Normalize actions to [pitch, roll, yaw, thrust, gun]."""
+        arr = np.asarray(action, dtype=np.float32).reshape(-1)
+        if arr.shape[0] != 5:
+            raise ValueError(f"Expected action with 5 elements, got shape {arr.shape}")
+        return arr
 
     # ------------------------------------------------------------------
     # Connection helpers
@@ -136,6 +164,11 @@ class MissileEvasionEnv(gym.Env):
         self._missile_fire_step = 0
         self._tracked_missile_ids = []
         self._gear_retracted = False
+        self._prev_plane_state = None
+        self._prev_action = None
+        self._prev_closest_missile_distance = None
+        self._max_g_load = 0.0
+        self._effective_max_steps = self.max_steps
 
         # Reset both aircraft
         df.reset_machine(self.ally_id)
@@ -148,6 +181,7 @@ class MissileEvasionEnv(gym.Env):
         df.set_plane_thrust(self.ally_id, 1.0)
         df.set_plane_linear_speed(self.ally_id, 300)
         df.retract_gear(self.ally_id)
+        df.deactivate_machine_gun(self.ally_id)
 
         # Place enemy: ~2 km behind the agent, same altitude, chasing
         df.reset_machine_matrix(
@@ -184,10 +218,13 @@ class MissileEvasionEnv(gym.Env):
 
         self._initial_health = 1.0
 
-        obs = self._get_obs()
+        plane_state = df.get_plane_state(self.ally_id)
+        self._prev_plane_state = plane_state
+        obs = self._build_obs(plane_state, [])
         return obs, {}
 
     def step(self, action, n=1):
+        action = self._normalize_action(action)
         self._step_count += n
 
         # Fire missile before advancing (so missile is in flight this frame)
@@ -198,6 +235,11 @@ class MissileEvasionEnv(gym.Env):
         if not self._gear_retracted:
             df.retract_gear(self.ally_id)
             self._gear_retracted = True
+
+        if float(action[4]) >= GUN_FIRE_THRESHOLD:
+            df.activate_machine_gun(self.ally_id)
+        else:
+            df.deactivate_machine_gun(self.ally_id)
 
         # Single round-trip: apply controls + advance sim n frames + return state
         if n > 1:
@@ -225,16 +267,23 @@ class MissileEvasionEnv(gym.Env):
                 current_ids = set(df.get_missiles_list())
                 new_ids = current_ids - self._pre_fire_missile_ids
                 self._tracked_missile_ids = list(new_ids)
+                if self._tracked_missile_ids:
+                    missile_states = self._get_missile_states()
 
         obs = self._build_obs(plane_state, missile_states)
         reward, terminated, truncated, info = self._compute_reward_and_done(
-            action, plane_state, health, missile_states
+            action, plane_state, health, missile_states, n
         )
+        self._prev_plane_state = plane_state
+        self._prev_action = np.array(action, dtype=np.float32, copy=True)
 
         return obs, reward, terminated, truncated, info
 
     def close(self):
         if self._connected:
+            if self.renderless:
+                df.set_client_update_mode(False)
+                df.set_renderless_mode(False)
             df.disconnect()
             self._connected = False
 
@@ -332,15 +381,130 @@ class MissileEvasionEnv(gym.Env):
 
         return np.concatenate([agent_obs, missile_obs])
 
-    def _compute_reward_and_done(self, action, plane, health, missile_states):
+    def _get_active_missile_metrics(self, plane, missile_states: list[dict]) -> list[dict]:
+        """Return distance/closure metrics for active missiles."""
+        metrics = []
+        a_pos = np.array(plane["position"], dtype=np.float32)
+        a_vel = np.array(plane["move_vector"], dtype=np.float32)
+
+        for ms in missile_states:
+            if not ms.get("active", False) or ms.get("destroyed", False):
+                continue
+            if "position" not in ms:
+                continue
+
+            m_pos = np.array(ms["position"], dtype=np.float32)
+            m_vel = np.array(ms["move_vector"], dtype=np.float32)
+            rel_pos = m_pos - a_pos
+            distance = float(np.linalg.norm(rel_pos))
+            if distance > 1e-6:
+                rel_dir = rel_pos / distance
+                approach_speed = float(-np.dot(m_vel - a_vel, rel_dir))
+            else:
+                approach_speed = 0.0
+
+            metrics.append(
+                {
+                    "missile_id": ms.get("missile_id"),
+                    "distance": distance,
+                    "approach_speed": max(0.0, approach_speed),
+                }
+            )
+
+        return metrics
+
+    def _compute_flight_metrics(self, plane, n: int) -> dict:
+        """Estimate flight-envelope metrics from consecutive plane states."""
+        g_load = plane.get("g_load")
+        if g_load is not None:
+            return {
+                "g_load": float(g_load),
+                "angle_of_attack": abs(float(plane.get("angle_of_attack", 0.0))),
+                "pitch_attitude": abs(float(plane.get("pitch_attitude", 0.0))),
+                "vertical_speed": float(plane.get("vertical_speed", 0.0)),
+            }
+
+        move_vector = np.array(plane["move_vector"], dtype=np.float32)
+        timestep = max(float(plane.get("timestep", 1 / 30)) * max(n, 1), 1e-6)
+
+        if self._prev_plane_state is None:
+            world_accel = np.zeros(3, dtype=np.float32)
+        else:
+            prev_move = np.array(
+                self._prev_plane_state.get("move_vector", move_vector),
+                dtype=np.float32,
+            )
+            world_accel = (move_vector - prev_move) / timestep
+
+        # Proper acceleration is the non-gravitational acceleration the pilot feels.
+        specific_force = world_accel - GRAVITY_VECTOR
+        g_load = float(np.linalg.norm(specific_force) / GRAVITY_MPS2)
+
+        return {
+            "g_load": g_load,
+            "angle_of_attack": abs(float(plane.get("angle_of_attack", 0.0))),
+            "pitch_attitude": abs(float(plane.get("pitch_attitude", 0.0))),
+            "vertical_speed": float(plane.get("vertical_speed", 0.0)),
+        }
+
+    def _count_active_missiles(self, missile_states: list[dict]) -> int:
+        return sum(
+            1
+            for ms in missile_states
+            if ms.get("active", False) and not ms.get("destroyed", False)
+        )
+
+    def _update_timeout_budget(self, plane: dict, missile_states: list[dict]) -> int:
+        """Extend the timeout so launched missiles can actually burn out."""
+        timeout_budget = self.max_steps
+        default_timestep = max(float(plane.get("timestep", 1 / 30)), 1e-6)
+
+        for ms in missile_states:
+            if not ms.get("active", False) or ms.get("destroyed", False):
+                continue
+
+            life_delay = ms.get("life_delay")
+            life_time = ms.get("life_time")
+            if life_delay is None or life_time is None:
+                continue
+
+            missile_timestep = max(float(ms.get("timestep", default_timestep)), 1e-6)
+            remaining_life = max(0.0, float(life_delay) - float(life_time))
+            timeout_budget = max(
+                timeout_budget,
+                self._step_count
+                + int(math.ceil((remaining_life + MISSILE_TIMEOUT_BUFFER_SECONDS) / missile_timestep)),
+            )
+
+        self._effective_max_steps = max(self._effective_max_steps, timeout_budget)
+        return self._effective_max_steps
+
+    def _compute_reward_and_done(self, action, plane, health, missile_states, n):
         info = {}
         reward = 0.0
         terminated = False
         truncated = False
 
         alt = plane.get("altitude", 4000.0)
-
         speed = plane.get("linear_speed", 300.0)
+        action = np.asarray(action, dtype=np.float32)
+        flight_metrics = self._compute_flight_metrics(plane, n)
+        g_load = flight_metrics["g_load"]
+        angle_of_attack = flight_metrics["angle_of_attack"]
+        pitch_attitude = flight_metrics["pitch_attitude"]
+        self._max_g_load = max(self._max_g_load, g_load)
+        active_missiles_remaining = self._count_active_missiles(missile_states)
+        timeout_budget = self._update_timeout_budget(plane, missile_states)
+
+        info["g_load"] = g_load
+        info["max_g_load"] = self._max_g_load
+        info["angle_of_attack"] = angle_of_attack
+        info["pitch_attitude"] = pitch_attitude
+        info["vertical_speed"] = flight_metrics["vertical_speed"]
+        info["tracked_missiles"] = len(self._tracked_missile_ids)
+        info["active_missiles_remaining"] = active_missiles_remaining
+        info["timeout_step_budget"] = timeout_budget
+        info["gun_active"] = float(action[4]) >= GUN_FIRE_THRESHOLD
 
         # +1 per step alive (survival reward)
         reward += 1.0
@@ -348,6 +512,10 @@ class MissileEvasionEnv(gym.Env):
         # Penalty for extreme manoeuvres (encourages smooth evasion)
         action_magnitude = float(np.sum(np.square(action[:3])))
         reward -= 0.05 * action_magnitude
+        if self._prev_action is not None:
+            action_delta = action - self._prev_action
+            reward -= ACTION_SMOOTHNESS_SCALE * float(np.sum(np.square(action_delta[:3])))
+            info["control_delta"] = float(np.linalg.norm(action_delta[:3]))
 
         # Altitude penalty — stay in safe band
         if alt < ALT_MIN:
@@ -365,6 +533,53 @@ class MissileEvasionEnv(gym.Env):
             reward -= 5.0
         elif speed < 150:
             reward -= 1.0
+
+        # Low-energy, nose-high flight is the closest thing this simulator has
+        # to an explicit stall regime, so penalize it directly.
+        stall_risk = 0.0
+        stall_angle = angle_of_attack if angle_of_attack > 0 else pitch_attitude
+        if speed < STALL_SPEED_SOFT and stall_angle > STALL_PITCH_SOFT:
+            speed_risk = min(
+                1.0,
+                max(0.0, (STALL_SPEED_SOFT - speed) / (STALL_SPEED_SOFT - STALL_SPEED_HARD)),
+            )
+            pitch_risk = min(
+                1.0,
+                max(0.0, (stall_angle - STALL_PITCH_SOFT) / (STALL_PITCH_HARD - STALL_PITCH_SOFT)),
+            )
+            stall_risk = speed_risk * pitch_risk
+            reward -= 1.5 * stall_risk
+        info["stall_risk"] = stall_risk
+
+        # Penalize blackout-inducing maneuvers.
+        g_over_soft = max(0.0, g_load - G_SOFT_LIMIT)
+        if g_over_soft > 0:
+            reward -= 0.25 * g_over_soft * g_over_soft
+        if g_load > G_HARD_LIMIT:
+            reward -= 2.0 + (g_load - G_HARD_LIMIT)
+
+        missile_metrics = self._get_active_missile_metrics(plane, missile_states)
+        if missile_metrics:
+            closest_distance = min(m["distance"] for m in missile_metrics)
+            max_approach_speed = max(m["approach_speed"] for m in missile_metrics)
+            info["closest_missile_distance"] = closest_distance
+            info["max_missile_approach_speed"] = max_approach_speed
+
+            if self._prev_closest_missile_distance is not None:
+                distance_delta = np.clip(
+                    closest_distance - self._prev_closest_missile_distance,
+                    -200.0,
+                    200.0,
+                )
+                reward += MISSILE_DISTANCE_DELTA_SCALE * float(distance_delta)
+
+            reward -= MISSILE_CLOSING_PENALTY_SCALE * max_approach_speed
+            if closest_distance < MISSILE_DANGER_DISTANCE:
+                reward -= (MISSILE_DANGER_DISTANCE - closest_distance) / MISSILE_DANGER_DISTANCE
+
+            self._prev_closest_missile_distance = closest_distance
+        else:
+            self._prev_closest_missile_distance = None
 
         # Check if hit by missile (health dropped)
         if health < self._initial_health - 0.01:
@@ -395,12 +610,19 @@ class MissileEvasionEnv(gym.Env):
             info["outcome"] = "evaded"
 
         # Max steps reached
-        if self._step_count >= self.max_steps and not terminated:
-            truncated = True
-            if self._missile_launched:
-                reward += 50.0
-                info["outcome"] = "survived_timeout"
+        if self._step_count >= timeout_budget and not terminated:
+            if self._missile_launched and self._all_missiles_gone(missile_states):
+                reward += 100.0
+                terminated = True
+                info["outcome"] = "evaded"
             else:
-                info["outcome"] = "timeout_no_missile"
+                truncated = True
+                if self._missile_launched:
+                    if active_missiles_remaining > 0:
+                        info["outcome"] = "timeout_active_missiles"
+                    else:
+                        info["outcome"] = "timeout_unknown_missile_state"
+                else:
+                    info["outcome"] = "timeout_no_missile"
 
         return reward, terminated, truncated, info

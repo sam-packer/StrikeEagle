@@ -18,12 +18,12 @@ def main():
     print(f"Action space: {env.action_space}")
     print(f"  low:  {env.action_space.low}")
     print(f"  high: {env.action_space.high}")
-    assert env.action_space.shape == (4,), "Action space shape mismatch"
+    assert env.action_space.shape == (5,), "Action space shape mismatch"
 
     # Sample random actions
     for _ in range(5):
         a = env.action_space.sample()
-        assert a.shape == (4,)
+        assert a.shape == (5,)
         assert np.all(a >= env.action_space.low)
         assert np.all(a <= env.action_space.high)
 

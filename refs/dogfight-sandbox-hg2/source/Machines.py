@@ -388,6 +388,9 @@ class Destroyable_Machine(AnimatedModel):
         self.linear_acceleration = 0
         self.linear_speeds = [0] * 10
         self.linear_spd_rec_cnt = 0
+        self.g_load = 1
+        self.g_force = hg.Vec3(0, abs(Physics.F_gravity.y), 0)
+        self.v_move_prev = hg.Vec3(0, 0, 0)
 
         # Physic Wakeup check:
         self.pos_prec = hg.Vec3(0, 0, 0)
@@ -476,6 +479,9 @@ class Destroyable_Machine(AnimatedModel):
         self.set_custom_physics_mode(False)
 
         self.reset_matrix(self.start_position, self.start_rotation)
+        self.g_load = 1
+        self.g_force = hg.Vec3(0, abs(Physics.F_gravity.y), 0)
+        self.v_move_prev = hg.Vec3(self.v_move.x, self.v_move.y, self.v_move.z)
 
     def add_to_update_list(self):
         if self not in Destroyable_Machine.update_list:
@@ -700,6 +706,12 @@ class Destroyable_Machine(AnimatedModel):
         if aX.y < 0: roll_attitude *= -1
         return roll_attitude
 
+    def get_angle_of_attack(self):
+        return self.angle_of_attack
+
+    def get_sideslip_angle(self):
+        return self.sideslip_angle
+
     def calculate_heading(self, h_dir: hg.Vec3):
         heading = degrees(acos(max(-1, min(1, hg.Dot(h_dir, hg.Vec3.Front)))))
         if h_dir.x < 0: heading = 360 - heading
@@ -766,6 +778,26 @@ class Destroyable_Machine(AnimatedModel):
 
     def get_linear_acceleration(self):
         return self.linear_acceleration
+
+    def update_g_load(self, dts, matrix=None):
+        if dts <= 0:
+            return
+        if matrix is None:
+            matrix = self.parent_node.GetTransform().GetWorld()
+
+        world_acceleration = (self.v_move - self.v_move_prev) * (1 / dts)
+        self.g_force = world_acceleration - Physics.F_gravity
+
+        aY = hg.Normalize(hg.GetY(matrix))
+        gravity_norm = max(1e-6, abs(Physics.F_gravity.y))
+        self.g_load = hg.Dot(self.g_force, aY) / gravity_norm
+        self.v_move_prev = hg.Vec3(self.v_move.x, self.v_move.y, self.v_move.z)
+
+    def get_g_force(self):
+        return self.g_force
+
+    def get_g_load(self):
+        return self.g_load
 
     def update_feedbacks(self, dts):
         pass
@@ -836,6 +868,7 @@ class Destroyable_Machine(AnimatedModel):
             self.parent_node.GetTransform().SetPos(pos)
             self.parent_node.GetTransform().SetRot(rot)
 
+            self.update_g_load(dts, mat)
             self.rec_linear_speed()
             self.update_linear_acceleration()
 
@@ -874,6 +907,8 @@ class Missile(Destroyable_Machine):
 
         self.target = None
         self.target_collision_test_distance_max = 500
+        self.proximity_fuse_radius = 12
+        self.proximity_fuse_min_damage_scale = 0.6
 
         # Missile constantes:
         self.thrust_force = 100
@@ -1112,14 +1147,30 @@ class Missile(Destroyable_Machine):
     def get_hit_damages(self):
         raise NotImplementedError
 
+    def detonate_on_target(self, impact_point: hg.Vec3, distance_to_target=0):
+        damage_scale = 1.0
+        if self.proximity_fuse_radius > 0:
+            damage_scale = max(
+                self.proximity_fuse_min_damage_scale,
+                1.0 - distance_to_target / max(self.proximity_fuse_radius, 1e-3),
+            )
+
+        self.start_explosion()
+        if self.target is not None and not self.target.wreck:
+            self.target.hit(self.get_hit_damages() * damage_scale, impact_point)
+
     def update_collisions(self, matrix, dts):
 
         smoke_start_pos = hg.GetT(self.engines_slots[0].GetTransform().GetWorld())
 
         collisions_raycasts = []
+        raycast_length = 0
         if self.target is not None:
-            distance = hg.Len(self.target.get_parent_node().GetTransform().GetPos() - hg.GetT(matrix))
-            if distance < self.target_collision_test_distance_max:
+            target_pos = self.target.get_parent_node().GetTransform().GetPos()
+            distance = hg.Len(target_pos - hg.GetT(matrix))
+            if distance <= self.proximity_fuse_radius:
+                self.detonate_on_target(target_pos, distance)
+            elif distance < self.target_collision_test_distance_max:
 
 
                 #debug
@@ -1156,7 +1207,7 @@ class Missile(Destroyable_Machine):
         # self.v_move = physics_parameters["v_move"]
 
         # Collision
-        if self.target is not None:
+        if self.target is not None and not self.wreck:
 
             for collision in rays_hits:
                 if collision["name"] == "front":
@@ -1167,8 +1218,7 @@ class Missile(Destroyable_Machine):
                             if hg.Len(v_impact) < 2 * hg.Len(self.v_move) * dts:
                                 collision_object = Collisions_Object.get_object_by_collision_node(hit.node)
                                 if collision_object is not None and hasattr(collision_object, "nationality") and collision_object.nationality != self.nationality:
-                                    self.start_explosion()
-                                    collision_object.hit(self.get_hit_damages(), hit.P)
+                                    self.detonate_on_target(hit.P, 0)
 
         #debug:
         if self.flag_user_control:
@@ -1393,6 +1443,21 @@ class Aircraft(Destroyable_Machine):
         self.max_altitude = 30000
         self.landing_max_speed = 300  # km/h
 
+        # Simplified high-alpha / departure model.
+        self.alpha_peak_deg = 18
+        self.alpha_limit_deg = 28
+        self.alpha_departure_deg = 36
+        self.deep_stall_alpha_deg = 45
+        self.post_stall_lift_factor = 0.45
+        self.high_alpha_drag_factor = 2.0
+        self.alpha_protection = False
+        self.alpha_protection_gain = 0.25
+        self.departure_speed_mps = 130
+        self.beta_departure_deg = 10
+        self.high_alpha_yaw_coupling = 0.1
+        self.high_alpha_roll_coupling = 0.08
+        self.deep_stall_trim_gain = 0.04
+
         # Aircraft vars:
         self.flag_going_to_takeoff_position = False
         self.takeoff_position = None
@@ -1415,6 +1480,8 @@ class Aircraft(Destroyable_Machine):
         self.pitch_attitude = 0
         self.roll_attitude = 0
         self.heading = 0
+        self.angle_of_attack = 0
+        self.sideslip_angle = 0
 
         self.flag_landed = True
         self.minimum_flight_speed = 250
@@ -1469,6 +1536,11 @@ class Aircraft(Destroyable_Machine):
 
         self.linear_speeds = [self.start_linear_speed] * 10
         self.linear_acceleration = 0
+        self.g_load = 1
+        self.g_force = hg.Vec3(0, abs(Physics.F_gravity.y), 0)
+        self.v_move_prev = hg.Vec3(self.v_move.x, self.v_move.y, self.v_move.z)
+        self.angle_of_attack = 0
+        self.sideslip_angle = 0
 
         self.flag_landed = self.start_landed
 
@@ -1956,7 +2028,20 @@ class Aircraft(Destroyable_Machine):
                 "angular_levels": self.angular_levels,
                 "angular_frictions": self.angular_frictions,
                 "speed_ceiling": self.speed_ceiling,
-                "flag_easy_steering": self.flag_easy_steering
+                "flag_easy_steering": self.flag_easy_steering,
+                "alpha_peak_deg": self.alpha_peak_deg,
+                "alpha_limit_deg": self.alpha_limit_deg,
+                "alpha_departure_deg": self.alpha_departure_deg,
+                "deep_stall_alpha_deg": self.deep_stall_alpha_deg,
+                "post_stall_lift_factor": self.post_stall_lift_factor,
+                "high_alpha_drag_factor": self.high_alpha_drag_factor,
+                "alpha_protection": self.alpha_protection,
+                "alpha_protection_gain": self.alpha_protection_gain,
+                "departure_speed_mps": self.departure_speed_mps,
+                "beta_departure_deg": self.beta_departure_deg,
+                "high_alpha_yaw_coupling": self.high_alpha_yaw_coupling,
+                "high_alpha_roll_coupling": self.high_alpha_roll_coupling,
+                "deep_stall_trim_gain": self.deep_stall_trim_gain
                 }
 
     def update_kinetics(self, dts):
@@ -1998,6 +2083,8 @@ class Aircraft(Destroyable_Machine):
                     self.pitch_attitude = physics_parameters["pitch_attitude"]
                     self.heading = physics_parameters["heading"]
                     self.roll_attitude = physics_parameters["roll_attitude"]
+                    self.angle_of_attack = physics_parameters.get("angle_of_attack", 0)
+                    self.sideslip_angle = physics_parameters.get("sideslip_angle", 0)
                     self.v_move = physics_parameters["v_move"]
 
                     # ========================== Update collisions
@@ -2022,6 +2109,7 @@ class Aircraft(Destroyable_Machine):
 
                     # ======== Update Acceleration ==========================================================
 
+                    self.update_g_load(dts, mat)
                     self.rec_linear_speed()
                     self.update_linear_acceleration()
 
@@ -2199,7 +2287,6 @@ class AircraftSFX:
         # Betty voice callouts
         self.betty_altitude_ref = hg.LoadWAVSoundAsset("sfx/betty_altitude.wav")
         self.betty_pullup_ref = hg.LoadWAVSoundAsset("sfx/betty_pullup.wav")
-        self.betty_bingo_ref = hg.LoadWAVSoundAsset("sfx/betty_bingo.wav")
         self.betty_flight_controls_ref = hg.LoadWAVSoundAsset("sfx/betty_flight_controls.wav")
 
         self.turbine_state = tools.create_spatialized_sound_state(hg.SR_Loop)
@@ -2231,10 +2318,13 @@ class AircraftSFX:
         self.rwr_tracking_active = False
         self.rwr_threat_state = "none"  # "none", "tracking", "missile"
 
+        # RWR contact delay — play contact beep first, then start warning/tracking sound after it finishes
+        self.rwr_contact_delay = 0
+        self.rwr_pending_sound = None  # "missile" or "tracking"
+
         # Betty callout cooldowns (prevent spamming)
         self.betty_altitude_cooldown = 0
         self.betty_pullup_cooldown = 0
-        self.betty_bingo_cooldown = 0
         self.betty_damage_cooldown = 0
 
         self.pc_started = False
@@ -2245,9 +2335,10 @@ class AircraftSFX:
     def reset(self):
         self.exploded = False
         self._stop_rwr()
+        self.rwr_contact_delay = 0
+        self.rwr_pending_sound = None
         self.betty_altitude_cooldown = 0
         self.betty_pullup_cooldown = 0
-        self.betty_bingo_cooldown = 0
         self.betty_damage_cooldown = 0
 
     def _stop_rwr(self):
@@ -2261,6 +2352,8 @@ class AircraftSFX:
             self.rwr_tracking_source = None
         self.rwr_tracking_active = False
         self.rwr_threat_state = "none"
+        self.rwr_contact_delay = 0
+        self.rwr_pending_sound = None
 
     def set_air_pitch(self, value):
         self.air_state.pitch = value
@@ -2422,30 +2515,47 @@ class AircraftSFX:
 
             # Start new sounds
             if new_state == "missile":
-                # Play contact beep then missile warning loop
+                # Play contact beep, start missile warning muted (ramps up after contact finishes)
                 contact_state = tools.create_stereo_sound_state(hg.SR_Once)
                 contact_state.volume = 0.9
                 hg.PlayStereo(self.rwr_contact_ref, contact_state)
-                self.missile_warning_state.volume = 0.8
+                self.missile_warning_state.volume = 0
                 self.missile_warning_source = hg.PlayStereo(self.missile_warning_ref, self.missile_warning_state)
                 self.missile_warning_active = True
+                self.rwr_contact_delay = 0.65
+                self.rwr_pending_sound = "missile"
 
             elif new_state == "tracking":
-                # Play contact beep then tracking loop
+                # Play contact beep, start tracking muted (ramps up after contact finishes)
                 contact_state = tools.create_stereo_sound_state(hg.SR_Once)
                 contact_state.volume = 0.7
                 hg.PlayStereo(self.rwr_contact_ref, contact_state)
-                self.rwr_tracking_state.volume = 0.6
+                self.rwr_tracking_state.volume = 0
                 self.rwr_tracking_source = hg.PlayStereo(self.rwr_tracking_ref, self.rwr_tracking_state)
                 self.rwr_tracking_active = True
+                self.rwr_contact_delay = 0.65
+                self.rwr_pending_sound = "tracking"
 
             elif new_state == "none" and old_state != "none":
                 # Threat gone — play the clear tone
+                self.rwr_contact_delay = 0
+                self.rwr_pending_sound = None
                 clear_state = tools.create_stereo_sound_state(hg.SR_Once)
                 clear_state.volume = 0.7
                 hg.PlayStereo(self.rwr_clear_ref, clear_state)
 
             self.rwr_threat_state = new_state
+
+        # Ramp up the warning/tracking volume after the contact beep finishes
+        if self.rwr_contact_delay > 0:
+            self.rwr_contact_delay -= dts
+            if self.rwr_contact_delay <= 0:
+                self.rwr_contact_delay = 0
+                if self.rwr_pending_sound == "missile" and self.missile_warning_source is not None:
+                    hg.SetSourceVolume(self.missile_warning_source, 0.8)
+                elif self.rwr_pending_sound == "tracking" and self.rwr_tracking_source is not None:
+                    hg.SetSourceVolume(self.rwr_tracking_source, 0.6)
+                self.rwr_pending_sound = None
 
         # Betty voice callouts
         # Cooldowns tick down each frame
@@ -2453,8 +2563,6 @@ class AircraftSFX:
             self.betty_altitude_cooldown -= dts
         if self.betty_pullup_cooldown > 0:
             self.betty_pullup_cooldown -= dts
-        if self.betty_bingo_cooldown > 0:
-            self.betty_bingo_cooldown -= dts
         if self.betty_damage_cooldown > 0:
             self.betty_damage_cooldown -= dts
 
@@ -2474,13 +2582,9 @@ class AircraftSFX:
             hg.PlayStereo(self.betty_altitude_ref, betty_vol)
             self.betty_altitude_cooldown = 5.0
 
-        # "BINGO" — low speed warning (below 100 m/s ~200 knots, stall danger)
-        if is_airborne and self.aircraft.get_linear_speed() < 100 and not self.aircraft.wreck and self.betty_bingo_cooldown <= 0:
-            hg.PlayStereo(self.betty_bingo_ref, betty_vol)
-            self.betty_bingo_cooldown = 10.0
-
-        # "FLIGHT CONTROLS" + deedle — when aircraft takes significant damage
-        if self.aircraft.health_level < 0.5 and is_airborne and not self.aircraft.wreck and self.betty_damage_cooldown <= 0:
+        # "FLIGHT CONTROLS" + deedle — when aircraft takes significant damage or exceeds 9G
+        over_g = abs(self.aircraft.get_g_load()) > 9.0
+        if (self.aircraft.health_level < 0.5 or over_g) and is_airborne and not self.aircraft.wreck and self.betty_damage_cooldown <= 0:
             hg.PlayStereo(self.deedle_deedle_ref, betty_vol)
             hg.PlayStereo(self.betty_flight_controls_ref, betty_vol)
             self.betty_damage_cooldown = 10.0

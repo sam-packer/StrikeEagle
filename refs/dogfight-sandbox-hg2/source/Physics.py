@@ -1,7 +1,8 @@
 # Copyright (C) 2018-2021 Eric Kernin, NWNC HARFANG.
 
 import harfang as hg
-from math import radians, degrees, pi, sqrt, exp, floor, acos, asin
+from math import radians, degrees, pi, sqrt, exp, floor, acos, asin, atan2
+import MathsSupp as ms
 from MathsSupp import *
 import tools as tools
 from overlays import *
@@ -91,6 +92,20 @@ def compute_atmosphere_density(altitude):
 	return d
 
 
+def _clamp(v, lo, hi):
+	return max(lo, min(hi, v))
+
+
+def _lerp(a, b, t):
+	return a + (b - a) * t
+
+
+def _smoothstep(edge0, edge1, x):
+	if edge1 <= edge0:
+		return 1.0 if x >= edge1 else 0.0
+	return ms.MathsSupp.smoothstep(edge0, edge1, x)
+
+
 def update_collisions(matrix: hg.Mat4, collisions_object, collisions_raycasts):
 	rays_hits = []
 
@@ -140,11 +155,18 @@ def update_physics(matrix, collisions_object, physics_parameters, dts):
 		heading = 360 - heading
 
 	# axis speed:
-	spdX = aX * hg.Dot(aX, physics_parameters["v_move"])
-	spdY = aY * hg.Dot(aY, physics_parameters["v_move"])
-	spdZ = aZ * hg.Dot(aZ, physics_parameters["v_move"])
+	body_spd_x = hg.Dot(aX, physics_parameters["v_move"])
+	body_spd_y = hg.Dot(aY, physics_parameters["v_move"])
+	body_spd_z = hg.Dot(aZ, physics_parameters["v_move"])
+	spdX = aX * body_spd_x
+	spdY = aY * body_spd_y
+	spdZ = aZ * body_spd_z
 
-	frontal_speed = hg.Len(spdZ)
+	frontal_speed = max(0.0, abs(body_spd_z))
+	angle_of_attack = degrees(atan2(body_spd_y, max(1e-3, abs(body_spd_z))))
+	sideslip_angle = degrees(atan2(body_spd_x, max(1e-3, abs(body_spd_z))))
+	alpha_abs = abs(angle_of_attack)
+	beta_abs = abs(sideslip_angle)
 
 	# Thrust force:
 	k = pow(physics_parameters["thrust_level"], 2) * physics_parameters["thrust_force"]
@@ -158,12 +180,49 @@ def update_physics(matrix, collisions_object, physics_parameters, dts):
 	air_density = compute_atmosphere_density(pos.y)
 	# Dynamic pressure:
 	q = hg.Vec3(pow(hg.Len(spdX), 2), pow(hg.Len(spdY), 2), pow(hg.Len(spdZ), 2)) * 0.5 * air_density
+	total_speed = hg.Len(physics_parameters["v_move"])
+	q_total = 0.5 * air_density * pow(total_speed, 2)
+
+	alpha_peak_deg = physics_parameters.get("alpha_peak_deg", 18)
+	alpha_limit_deg = physics_parameters.get("alpha_limit_deg", 28)
+	alpha_departure_deg = physics_parameters.get("alpha_departure_deg", 36)
+	deep_stall_alpha_deg = physics_parameters.get("deep_stall_alpha_deg", 45)
+	post_stall_lift_factor = physics_parameters.get("post_stall_lift_factor", 0.45)
+	high_alpha_drag_factor = physics_parameters.get("high_alpha_drag_factor", 2.0)
+	alpha_protection = physics_parameters.get("alpha_protection", False)
+	alpha_protection_gain = physics_parameters.get("alpha_protection_gain", 0.25)
+	departure_speed_mps = physics_parameters.get("departure_speed_mps", 130)
+	beta_departure_deg = physics_parameters.get("beta_departure_deg", 10)
+	high_alpha_yaw_coupling = physics_parameters.get("high_alpha_yaw_coupling", 0.1)
+	high_alpha_roll_coupling = physics_parameters.get("high_alpha_roll_coupling", 0.08)
+	deep_stall_trim_gain = physics_parameters.get("deep_stall_trim_gain", 0.04)
+
+	high_alpha = _smoothstep(alpha_peak_deg, alpha_limit_deg, alpha_abs)
+	post_stall = _smoothstep(alpha_limit_deg, alpha_departure_deg, alpha_abs)
+	deep_stall = _smoothstep(alpha_departure_deg, deep_stall_alpha_deg, alpha_abs)
+	beta_departure = _smoothstep(beta_departure_deg * 0.5, beta_departure_deg, beta_abs)
+	low_speed = 1.0 - _smoothstep(departure_speed_mps, departure_speed_mps * 1.6, frontal_speed)
+
+	lift_scale = 1.0 + 0.2 * _smoothstep(0, alpha_peak_deg, alpha_abs)
+	lift_scale = _lerp(lift_scale, 1.0, high_alpha * 0.5)
+	lift_scale = _lerp(lift_scale, post_stall_lift_factor, post_stall)
+	lift_scale *= (1.0 - 0.35 * deep_stall)
+	lift_scale = max(0.15, lift_scale)
+
+	drag_scale = 1.0 + 0.4 * high_alpha + high_alpha_drag_factor * post_stall + 1.5 * deep_stall + 0.25 * beta_departure
+	flow_alignment = abs(body_spd_z) / max(total_speed, 1e-3)
+	lift_q = _lerp(q.z, q_total, _smoothstep(0, alpha_peak_deg, alpha_abs))
+	lift_q *= _lerp(1.0, max(0.35, flow_alignment), post_stall + 0.5 * deep_stall)
 
 	# F Lift
-	F_lift = aY * q.z * physics_parameters["lift_force"]
+	F_lift = aY * lift_q * physics_parameters["lift_force"] * lift_scale
 
 	# Drag force:
-	F_drag = hg.Normalize(spdX) * q.x * physics_parameters["drag_coefficients"].x + hg.Normalize(spdY) * q.y * physics_parameters["drag_coefficients"].y + hg.Normalize(spdZ) * q.z * physics_parameters["drag_coefficients"].z
+	F_drag = (
+		hg.Normalize(spdX) * q.x * physics_parameters["drag_coefficients"].x
+		+ hg.Normalize(spdY) * q.y * physics_parameters["drag_coefficients"].y
+		+ hg.Normalize(spdZ) * q.z * physics_parameters["drag_coefficients"].z
+	) * drag_scale
 
 	# Total
 
@@ -174,9 +233,13 @@ def update_physics(matrix, collisions_object, physics_parameters, dts):
 	pos += physics_parameters["v_move"] * dts
 
 	# Rotations:
-	F_pitch = physics_parameters["angular_levels"].x * q.z * physics_parameters["angular_frictions"].x
-	F_yaw = physics_parameters["angular_levels"].y * q.z * physics_parameters["angular_frictions"].y
-	F_roll = physics_parameters["angular_levels"].z * q.z * physics_parameters["angular_frictions"].z
+	pitch_control_scale = max(0.15, 1.0 - 0.15 * high_alpha - 0.45 * post_stall - 0.6 * deep_stall)
+	yaw_control_scale = max(0.15, 1.0 - 0.1 * high_alpha - 0.35 * post_stall - 0.45 * deep_stall)
+	roll_control_scale = max(0.1, 1.0 - 0.15 * high_alpha - 0.5 * post_stall - 0.65 * deep_stall)
+
+	F_pitch = physics_parameters["angular_levels"].x * q.z * physics_parameters["angular_frictions"].x * pitch_control_scale
+	F_yaw = physics_parameters["angular_levels"].y * q.z * physics_parameters["angular_frictions"].y * yaw_control_scale
+	F_roll = physics_parameters["angular_levels"].z * q.z * physics_parameters["angular_frictions"].z * roll_control_scale
 
 	# Angular damping:
 	gaussian = exp(-pow(frontal_speed * 3.6 * 3 / physics_parameters["speed_ceiling"], 2) / 2)
@@ -189,8 +252,29 @@ def update_physics(matrix, collisions_object, physics_parameters, dts):
 	yaw_m = aY * angular_speed.y
 	roll_m = aZ * angular_speed.z
 
+	# F-16-like high-alpha behavior: normal maneuvering is protected by an
+	# AoA limiter, but once the aircraft is forced into a low-energy high-alpha
+	# state, control effectiveness drops and departure tendencies appear.
+	if alpha_protection and alpha_abs > alpha_limit_deg:
+		alpha_guard = _smoothstep(alpha_limit_deg, alpha_departure_deg, alpha_abs)
+		alpha_sign = 1.0 if angle_of_attack >= 0 else -1.0
+		pitch_m += aX * (-alpha_sign * alpha_protection_gain * alpha_guard * q.z * physics_parameters["angular_frictions"].x)
+
+	departure_factor = low_speed * max(post_stall, beta_departure * high_alpha)
+	if departure_factor > 0:
+		yaw_m += aY * (-physics_parameters["angular_levels"].z * high_alpha_yaw_coupling * q.z * physics_parameters["angular_frictions"].y * departure_factor)
+		roll_m += aZ * ((sideslip_angle / max(beta_departure_deg, 1e-3)) * high_alpha_roll_coupling * q.z * physics_parameters["angular_frictions"].z * departure_factor)
+
+	deep_stall_factor = low_speed * deep_stall
+	if deep_stall_factor > 0:
+		alpha_sign = 1.0 if angle_of_attack >= 0 else -1.0
+		pitch_m += aX * (alpha_sign * deep_stall_trim_gain * q.z * physics_parameters["angular_frictions"].x * deep_stall_factor)
+
 	# Easy steering:
 	if physics_parameters["flag_easy_steering"]:
+		# Keep the generic stabilizer effective in normal flight, but let it fade
+		# once the aircraft is forced beyond the protected alpha regime.
+		easy_steering_factor = _clamp(1.0 - 0.2 * high_alpha - 0.55 * post_stall - 0.85 * deep_stall, 0.05, 1.0)
 
 		easy_yaw_angle = (1 - (hg.Dot(aX, horizontal_aX)))
 		if hg.Dot(aZ, hg.Cross(aX, horizontal_aX)) < 0:
@@ -208,7 +292,7 @@ def update_physics(matrix, collisions_object, physics_parameters, dts):
 				easy_roll_stab *= (1 - n) * n + n * pow(n, 0.125)
 
 		zl = min(1, abs(physics_parameters["angular_levels"].z + physics_parameters["angular_levels"].x + physics_parameters["angular_levels"].y))
-		roll_m += (easy_roll_stab * (1 - zl) + easy_turn_m_yaw) * q.z * physics_parameters["angular_frictions"].y * gaussian
+		roll_m += (easy_roll_stab * (1 - zl) + easy_turn_m_yaw) * q.z * physics_parameters["angular_frictions"].y * gaussian * easy_steering_factor
 
 	# Moment:
 	torque = yaw_m + roll_m + pitch_m
@@ -217,9 +301,16 @@ def update_physics(matrix, collisions_object, physics_parameters, dts):
 
 	# Return matrix:
 
-	rot_mat = MathsSupp.rotate_matrix(matrix, axis_rot, moment_speed * dts)
+	rot_mat = ms.MathsSupp.rotate_matrix(matrix, axis_rot, moment_speed * dts)
 	mat = hg.TransformationMat4(pos, rot_mat)
 
 
 
-	return mat, {"v_move": physics_parameters["v_move"], "pitch_attitude": pitch_attitude, "heading": heading, "roll_attitude": roll_attitude}
+	return mat, {
+		"v_move": physics_parameters["v_move"],
+		"pitch_attitude": pitch_attitude,
+		"heading": heading,
+		"roll_attitude": roll_attitude,
+		"angle_of_attack": angle_of_attack,
+		"sideslip_angle": sideslip_angle,
+	}

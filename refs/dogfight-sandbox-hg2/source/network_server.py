@@ -23,6 +23,14 @@ flag_print_log = True
 commands_functions = []
 
 
+def restore_client_runtime_defaults():
+	main.flag_client_connected = False
+	main.flag_client_update_mode = False
+	main.flag_client_ask_update_scene = False
+	main.set_renderless_mode(False)
+	main.client_update_done.set()
+
+
 def get_network():
 	return socket_lib.HOST, dogfight_network_port
 
@@ -168,14 +176,14 @@ def server_update():
 					print("Client disconnected (clean)")
 					server_log += "Client disconnected"
 					flag_server_connected = False
-					main.flag_client_connected = False
+					restore_client_runtime_defaults()
 					break
 				answ.decode()
 				command = json.loads(answ)
 				if command == "":
 					server_log += "Disconnected"
 					flag_server_connected = False
-					main.flag_client_connected = False
+					restore_client_runtime_defaults()
 				else:
 					cmd_name = command["command"]
 					msg = "command:" + cmd_name
@@ -194,9 +202,7 @@ def server_update():
 			print(error_msg)
 			server_log += error_msg
 			flag_server_connected = False
-			main.flag_client_connected = False
-			main.flag_client_update_mode = False
-			main.set_renderless_mode(False)
+			restore_client_runtime_defaults()
 
 
 # Globals
@@ -288,8 +294,11 @@ def step_command(args):
 		"vertical_speed": v_spd,
 		"linear_speed": machine.get_linear_speed(),
 		"move_vector": [v_move.x, v_move.y, v_move.z],
+		"g_load": machine.get_g_load(),
 		"altitude": machine.get_altitude(),
 		"heading": machine.get_heading(),
+		"angle_of_attack": machine.get_angle_of_attack(),
+		"sideslip_angle": machine.get_sideslip_angle(),
 		"pitch_attitude": machine.get_pitch_attitude(),
 		"roll_attitude": machine.get_roll_attitude(),
 		"gear": gear_activated,
@@ -364,8 +373,11 @@ def step_n_command(args):
 		"vertical_speed": v_spd,
 		"linear_speed": machine.get_linear_speed(),
 		"move_vector": [v_move.x, v_move.y, v_move.z],
+		"g_load": machine.get_g_load(),
 		"altitude": machine.get_altitude(),
 		"heading": machine.get_heading(),
+		"angle_of_attack": machine.get_angle_of_attack(),
+		"sideslip_angle": machine.get_sideslip_angle(),
 		"pitch_attitude": machine.get_pitch_attitude(),
 		"roll_attitude": machine.get_roll_attitude(),
 		"gear": gear_activated,
@@ -536,7 +548,7 @@ def get_machine_gun_state(args):
 			gmd = machine.get_device(gm_name)
 			if gmd is not None:
 				gm_state = {
-					"machine_gun_activated": gmd.is_gun_activated(),
+					"machine_gun_activated": gmd.is_activated(),
 					"bullets_count": gmd.get_num_bullets()
 				}
 				state["MachineGunDevices"][gm_name] = gm_state
@@ -598,8 +610,8 @@ def activate_machine_gun(args):
 	n = machine.get_machinegun_count()
 	for i in range(n):
 		mgd = machine.get_device("MachineGunDevice_%02d" % i)
-		if mgd is not None and not mgd.is_gun_activated():
-			mgd.fire_machine_gun()
+		if mgd is not None and not mgd.is_activated():
+			mgd.activate()
 
 
 def deactivate_machine_gun(args):
@@ -609,8 +621,8 @@ def deactivate_machine_gun(args):
 	n = machine.get_machinegun_count()
 	for i in range(n):
 		mgd = machine.get_device("MachineGunDevice_%02d" % i)
-		if mgd is not None and mgd.is_gun_activated():
-			mgd.stop_machine_gun()
+		if mgd is not None and mgd.is_activated():
+			mgd.deactivate()
 
 
 def get_health(args):
@@ -919,8 +931,11 @@ def get_plane_state(args):
 		"linear_speed": machine.get_linear_speed(),
 		"move_vector": [v_move.x, v_move.y, v_move.z],
 		"linear_acceleration": machine.get_linear_acceleration(),
+		"g_load": machine.get_g_load(),
 		"altitude": machine.get_altitude(),
 		"heading": machine.get_heading(),
+		"angle_of_attack": machine.get_angle_of_attack(),
+		"sideslip_angle": machine.get_sideslip_angle(),
 		"pitch_attitude": machine.get_pitch_attitude(),
 		"roll_attitude": machine.get_roll_attitude(),
 		"post_combustion": machine.post_combustion,

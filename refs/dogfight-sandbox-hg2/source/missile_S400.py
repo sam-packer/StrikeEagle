@@ -22,6 +22,7 @@ class S400(Missile):
         self.drag_coeff = hg.Vec3(0.37, 0.37, 0.0003)
         self.life_delay = 100
         self.smoke_delay = 1.5
+        self.proximity_fuse_radius = 20
 
     def get_hit_damages(self):
         return uniform(0.2, 0.3)

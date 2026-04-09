@@ -27,6 +27,22 @@ class F16_Parameters:
         self.angular_levels_inertias = hg.Vec3(3, 3, 3)
         self.angular_frictions = hg.Vec3(0.000175, 0.000125, 0.000275)  # pitch, yaw, roll
 
+        # F-16-like high-alpha envelope: strong AoA protection in normal
+        # maneuvering, but low-energy high-alpha states can still depart.
+        self.alpha_peak_deg = 15
+        self.alpha_limit_deg = 25
+        self.alpha_departure_deg = 32
+        self.deep_stall_alpha_deg = 45
+        self.post_stall_lift_factor = 0.4
+        self.high_alpha_drag_factor = 2.8
+        self.alpha_protection = True
+        self.alpha_protection_gain = 0.4
+        self.departure_speed_mps = 150
+        self.beta_departure_deg = 8
+        self.high_alpha_yaw_coupling = 0.18
+        self.high_alpha_roll_coupling = 0.1
+        self.deep_stall_trim_gain = 0.08
+
         self.mobile_parts_definitions = [
             ["aileron_left", -45, 45, 0, "dummy_flap_left", "X"],
             ["aileron_right", -45, 45, 0, "dummy_flap_right", "X"],
